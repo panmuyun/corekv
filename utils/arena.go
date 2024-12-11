@@ -84,17 +84,25 @@ func (arena *Arena) putVal(vs ValueStruct) uint32 {
 }
 
 func (arena *Arena) getNode(offset uint32) *node {
-
+	if offset == 0 {
+		return nil
+	}
+	return (*node)(unsafe.Pointer(&arena.buf[offset]))
 }
 
-func (arena *Arena) getKey(offset uint32) []byte {
-
+func (arena *Arena) getKey(offset uint32, size uint16) []byte {
+	return arena.buf[offset : offset+uint32(size)]
 }
 
-func (arena *Arena) getVal(offset uint32) ValueStruct {
-
+func (arena *Arena) getVal(offset uint32, size uint32) (ret ValueStruct) {
+	ret.DecodeValue(arena.buf[offset : offset+size])
+	return
 }
 
 func (arena *Arena) getNodeOffset(nd *node) uint32 {
-
+	if nd == nil {
+		return 0
+	}
+	// uintptr: 将指针转换为无符号整型，便于计算偏移量offset
+	return uint32(uintptr(unsafe.Pointer(nd)) - uintptr(unsafe.Pointer(&arena.buf[0])))
 }

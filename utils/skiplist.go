@@ -34,13 +34,10 @@ package utils
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"strings"
 	"sync/atomic"
 	_ "unsafe"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -564,12 +561,6 @@ type UniIterator struct {
 }
 
 // FastRand is a fast thread local random function.
+//
 //go:linkname FastRand runtime.fastrand
 func FastRand() uint32
-
-// AssertTruef is AssertTrue with extra info.
-func AssertTruef(b bool, format string, args ...interface{}) {
-	if !b {
-		log.Fatalf("%+v", errors.Errorf(format, args...))
-	}
-}
