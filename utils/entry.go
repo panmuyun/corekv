@@ -1,17 +1,3 @@
-// Copyright 2021 hardcore-os Project Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License")
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package utils
 
 import (
@@ -19,38 +5,39 @@ import (
 	"time"
 )
 
+// ValueStruct存放Entry中需要持久化的字段
 type ValueStruct struct {
 	Meta      byte
+	ExpiresAt uint64 // 过期时间
 	Value     []byte
-	ExpiresAt uint64
 
 	Version uint64 // This field is not serialized. Only for internal usage.
 }
 
-// value只持久化具体的value值和过期时间
+// 只持久化Meta、过期时间、具体的Value值
 func (vs *ValueStruct) EncodedSize() uint32 {
-	sz := len(vs.Value) + 1 // meta
-	enc := sizeVarint(vs.ExpiresAt)
-	return uint32(sz + enc)
+	// “1”指的是Meta所占的字节数
+	return uint32(1 + sizeVarint(vs.ExpiresAt) + len(vs.Value))
 }
 
-// DecodeValue
-func (vs *ValueStruct) DecodeValue(buf []byte) {
-	vs.Meta = buf[0]
-	var sz int
-	vs.ExpiresAt, sz = binary.Uvarint(buf[1:])
-	vs.Value = buf[1+sz:]
-}
-
-//对value进行编码，并将编码后的字节写入byte
-//这里将过期时间和value的值一起编码
+// 将ValueStruct的各字段值存入Arena的buf中，其中ExpiresAt字段的值经varint编码后再存入
+// 存放顺序：Meta、ExpiresAt的varint编码值、Value
 func (vs *ValueStruct) EncodeValue(b []byte) uint32 {
 	b[0] = vs.Meta
-	sz := binary.PutUvarint(b[1:], vs.ExpiresAt)
-	n := copy(b[1+sz:], vs.Value)
-	return uint32(1 + sz + n)
+	expsize := binary.PutUvarint(b[1:], vs.ExpiresAt)
+	valsize := copy(b[1+expsize:], vs.Value)
+	return uint32(1 + expsize + valsize)
 }
 
+// 从Arena的buf中取出ValueStruct的各字段值，并对ExpiresAt的varint编码值解码
+func (vs *ValueStruct) DecodeValue(buf []byte) {
+	vs.Meta = buf[0]
+	var expsize int
+	vs.ExpiresAt, expsize = binary.Uvarint(buf[1:])
+	vs.Value = buf[1+expsize:]
+}
+
+// 返回x的varint编码值需要占用的字节数
 func sizeVarint(x uint64) (n int) {
 	for {
 		n++
@@ -62,7 +49,7 @@ func sizeVarint(x uint64) (n int) {
 	return n
 }
 
-//Entry _ 最外层写入的结构体
+// Entry _ 最外层写入的结构体
 type Entry struct {
 	Key       []byte
 	Value     []byte
