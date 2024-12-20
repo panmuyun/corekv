@@ -41,18 +41,18 @@ func newCmSketch(numCounters int64) *cmSketch {
 	return sketch
 }
 
-func (s *cmSketch) Increment(hashed uint64) {
+func (cmsketch *cmSketch) Increment(hashed uint64) {
 	// 对于每一行进行相同操作
-	for i := range s.rows {
-		s.rows[i].increment((hashed ^ s.seed[i]) & s.mask)
+	for i := range cmsketch.rows {
+		cmsketch.rows[i].increment((hashed ^ cmsketch.seed[i]) & cmsketch.mask)
 	}
 }
 
 // 找到最小的计数值
-func (s *cmSketch) Estimate(hashed uint64) int64 {
+func (cmsketch *cmSketch) Estimate(hashed uint64) int64 {
 	min := byte(255)
-	for i := range s.rows {
-		val := s.rows[i].get((hashed ^ s.seed[i]) & s.mask)
+	for i := range cmsketch.rows {
+		val := cmsketch.rows[i].get((hashed ^ cmsketch.seed[i]) & cmsketch.mask)
 		if val < min {
 			min = val
 		}
@@ -61,15 +61,17 @@ func (s *cmSketch) Estimate(hashed uint64) int64 {
 	return int64(min)
 }
 
-func (s *cmSketch) Reset() {
-	for _, r := range s.rows {
-		r.reset()
+// 保鲜机制，将所有counter的计数减半
+func (cmsketch *cmSketch) Reset() {
+	for _, row := range cmsketch.rows {
+		row.reset()
 	}
 }
 
-func (s *cmSketch) Clear() {
-	for _, r := range s.rows {
-		r.clear()
+// 将所有counter的计数清零
+func (cmsketch *cmSketch) Clear() {
+	for _, row := range cmsketch.rows {
+		row.clear()
 	}
 }
 
@@ -95,40 +97,40 @@ func newCmRow(numCounters int64) cmRow {
 }
 
 // 获取n对应位置的counter的计数值
-func (r cmRow) get(n uint64) byte {
-	return r[n/2] >> ((n & 1) * 4) & 0x0f
+func (cmrow cmRow) get(n uint64) byte {
+	return cmrow[n/2] >> ((n & 1) * 4) & 0x0f
 }
 
-// 累加计数，n是key的哈希值
-func (r cmRow) increment(n uint64) {
-	i := n / 2                      // 定位到第i个byte
-	shift := (n & 1) * 4            // n & 1用于判断n是奇数还是偶数，所以n为奇数时s为4，n为偶数时s为0
-	count := (r[i] >> shift) & 0x0f // count为n对应位置的计数值
+// 累加计数，n代表cmrow中的第n个counter
+func (cmrow cmRow) increment(n uint64) {
+	i := n / 2                          // 定位到第i个byte
+	shift := (n & 1) * 4                // n & 1用于判断n是奇数还是偶数，所以n为奇数时s为4，n为偶数时s为0
+	count := (cmrow[i] >> shift) & 0x0f // count为n对应位置的计数值
 	// 没有超过最大计数时，计数+1
 	if count < 15 {
-		r[i] += 1 << shift
+		cmrow[i] += 1 << shift
 	}
 }
 
 // 保鲜机制，将所有counter的计数减半
-func (r cmRow) reset() {
-	for i := range r {
-		r[i] = (r[i] >> 1) & 0x77 // 0x77: 0111 0111,使得每个4bit的最高位置0.
+func (cmrow cmRow) reset() {
+	for i := range cmrow {
+		cmrow[i] = (cmrow[i] >> 1) & 0x77 // 0x77: 0111 0111,使得每个4bit的最高位置0.
 	}
 }
 
 // 将所有counter的计数清零
-func (r cmRow) clear() {
-	for i := range r {
-		r[i] = 0
+func (cmrow cmRow) clear() {
+	for i := range cmrow {
+		cmrow[i] = 0
 	}
 }
 
 // 显示所有counter的计数值
-func (r cmRow) string() string {
+func (cmrow cmRow) string() string {
 	str := ""
-	for i := uint64(0); i < uint64(len(r)*2); i++ {
-		str += fmt.Sprintf("%02d ", (r[(i/2)]>>((i&1)*4))&0x0f)
+	for i := uint64(0); i < uint64(len(cmrow)*2); i++ {
+		str += fmt.Sprintf("%02d ", (cmrow[(i/2)]>>((i&1)*4))&0x0f)
 	}
 	str = str[:len(str)-1]
 	return str

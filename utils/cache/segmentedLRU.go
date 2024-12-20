@@ -5,6 +5,7 @@ import (
 	"fmt"
 )
 
+// 将缓冲区分为2个部分：占20%的叫STAGE_ONE, 占80%的是STAGE_TWO
 type segmentedLRU struct {
 	data                     map[uint64]*list.Element
 	stageOneCap, stageTwoCap int

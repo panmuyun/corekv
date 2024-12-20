@@ -2,39 +2,40 @@ package cache
 
 import (
 	"container/list"
-	xxhash "github.com/cespare/xxhash/v2"
 	"sync"
 	"unsafe"
+
+	xxhash "github.com/cespare/xxhash/v2"
 )
 
 type Cache struct {
-	m         sync.RWMutex
-	lru       *windowLRU
+	mutex     sync.RWMutex
+	wlru      *windowLRU
 	slru      *segmentedLRU
 	door      *BloomFilter
-	c         *cmSketch
+	cmsketch  *cmSketch // 记录访问计数
 	t         int32
 	threshold int32
 	data      map[uint64]*list.Element
 }
 
 type Options struct {
-	lruPct uint8
+	wlruPct uint8
 }
 
 // NewCache size 指的是要缓存的数据个数
 func NewCache(size int) *Cache {
-	//定义 window 部分缓存所占百分比，这里定义为1%
-	const lruPct = 1
-	//计算出来 widow 部分的容量
-	lruSz := (lruPct * size) / 100
+	//定义 Window-LRU 部分缓存所占百分比，这里定义为1%
+	const wlruPct = 1
+	//计算出来 window 部分的容量
+	wlruSz := (wlruPct * size) / 100
 
-	if lruSz < 1 {
-		lruSz = 1
+	if wlruSz < 1 {
+		wlruSz = 1
 	}
 
-	// 计算 LFU 部分的缓存容量
-	slruSz := int(float64(size) * ((100 - lruPct) / 100.0))
+	// 计算 segmented-LFU 部分的缓存容量
+	slruSz := int(float64(size) * ((100 - wlruPct) / 100.0))
 
 	if slruSz < 1 {
 		slruSz = 1
@@ -50,24 +51,24 @@ func NewCache(size int) *Cache {
 	data := make(map[uint64]*list.Element, size)
 
 	return &Cache{
-		lru:  newWindowLRU(lruSz, data),
-		slru: newSLRU(data, slruO, slruSz-slruO),
-		door: newFilter(size, 0.01), //布隆过滤器设置误差率为0.01
-		c:    newCmSketch(int64(size)),
-		data: data, //共用同一个 map 存储数据
+		wlru:     newWindowLRU(wlruSz, data),
+		slru:     newSLRU(data, slruO, slruSz-slruO),
+		door:     newFilter(size, 0.01), //布隆过滤器设置误差率为0.01
+		cmsketch: newCmSketch(int64(size)),
+		data:     data, //共用同一个 map 存储数据
 	}
 
 }
 
-func (c *Cache) Set(key interface{}, value interface{}) bool {
-	c.m.Lock()
-	defer c.m.Unlock()
-	return c.set(key, value)
+func (cache *Cache) Set(key interface{}, value interface{}) bool {
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	return cache.set(key, value)
 }
 
-func (c *Cache) set(key, value interface{}) bool {
+func (cache *Cache) set(key, value interface{}) bool {
 	// keyHash 用来快速定位，conflice 用来判断冲突
-	keyHash, conflictHash := c.keyToHash(key)
+	keyHash, conflictHash := cache.keyToHash(key)
 
 	// 刚放进去的缓存都先放到 window lru 中，所以 stage = 0
 	i := storeItem{
@@ -78,7 +79,7 @@ func (c *Cache) set(key, value interface{}) bool {
 	}
 
 	// 如果 window 已满，要返回被淘汰的数据
-	eitem, evicted := c.lru.add(i)
+	eitem, evicted := cache.wlru.add(i)
 
 	if !evicted {
 		return true
@@ -87,89 +88,89 @@ func (c *Cache) set(key, value interface{}) bool {
 	// 如果 window 中有被淘汰的数据，会走到这里
 	// 需要从 LFU 的 stageOne 部分找到一个淘汰者
 	// 二者进行 PK
-	victim := c.slru.victim()
+	victim := cache.slru.victim()
 
 	// 走到这里是因为 LFU 未满，那么 window lru 的淘汰数据，可以进入 stageOne
 	if victim == nil {
-		c.slru.add(eitem)
+		cache.slru.add(eitem)
 		return true
 	}
 
 	// 这里进行 PK，必须在 bloomfilter 中出现过一次，才允许 PK
 	// 在 bf 中出现，说明访问频率 >= 2
-	if !c.door.Allow(uint32(eitem.key)) {
+	if !cache.door.Allow(uint32(eitem.key)) {
 		return true
 	}
 
 	// 估算 windowlru 和 LFU 中淘汰数据，历史访问频次
 	// 访问频率高的，被认为更有资格留下来
-	vcount := c.c.Estimate(victim.key)
-	ocount := c.c.Estimate(eitem.key)
+	vcount := cache.cmsketch.Estimate(victim.key)
+	ocount := cache.cmsketch.Estimate(eitem.key)
 
 	if ocount < vcount {
 		return true
 	}
 
 	// 留下来的人进入 stageOne
-	c.slru.add(eitem)
+	cache.slru.add(eitem)
 	return true
 }
 
-func (c *Cache) Get(key interface{}) (interface{}, bool) {
-	c.m.RLock()
-	defer c.m.RUnlock()
-	return c.get(key)
+func (cache *Cache) Get(key interface{}) (interface{}, bool) {
+	cache.mutex.RLock()
+	defer cache.mutex.RUnlock()
+	return cache.get(key)
 }
 
-func (c *Cache) get(key interface{}) (interface{}, bool) {
-	c.t++
-	if c.t == c.threshold {
-		c.c.Reset()
-		c.door.reset()
-		c.t = 0
+func (cache *Cache) get(key interface{}) (interface{}, bool) {
+	cache.t++
+	if cache.t == cache.threshold {
+		cache.cmsketch.Reset()
+		cache.door.reset()
+		cache.t = 0
 	}
 
-	keyHash, conflictHash := c.keyToHash(key)
+	keyHash, conflictHash := cache.keyToHash(key)
 
-	val, ok := c.data[keyHash]
+	val, ok := cache.data[keyHash]
 	if !ok {
-		c.door.Allow(uint32(keyHash))
-		c.c.Increment(keyHash)
+		cache.door.Allow(uint32(keyHash))
+		cache.cmsketch.Increment(keyHash)
 		return nil, false
 	}
 
 	item := val.Value.(*storeItem)
 
 	if item.conflict != conflictHash {
-		c.door.Allow(uint32(keyHash))
-		c.c.Increment(keyHash)
+		cache.door.Allow(uint32(keyHash))
+		cache.cmsketch.Increment(keyHash)
 		return nil, false
 	}
-	c.door.Allow(uint32(keyHash))
-	c.c.Increment(item.key)
+	cache.door.Allow(uint32(keyHash))
+	cache.cmsketch.Increment(item.key)
 
 	v := item.value
 
 	if item.stage == 0 {
-		c.lru.get(val)
+		cache.wlru.get(val)
 	} else {
-		c.slru.get(val)
+		cache.slru.get(val)
 	}
 
 	return v, true
 
 }
 
-func (c *Cache) Del(key interface{}) (interface{}, bool) {
-	c.m.Lock()
-	defer c.m.Unlock()
-	return c.del(key)
+func (cache *Cache) Del(key interface{}) (interface{}, bool) {
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	return cache.del(key)
 }
 
-func (c *Cache) del(key interface{}) (interface{}, bool) {
-	keyHash, conflictHash := c.keyToHash(key)
+func (cache *Cache) del(key interface{}) (interface{}, bool) {
+	keyHash, conflictHash := cache.keyToHash(key)
 
-	val, ok := c.data[keyHash]
+	val, ok := cache.data[keyHash]
 	if !ok {
 		return 0, false
 	}
@@ -180,11 +181,11 @@ func (c *Cache) del(key interface{}) (interface{}, bool) {
 		return 0, false
 	}
 
-	delete(c.data, keyHash)
+	delete(cache.data, keyHash)
 	return item.conflict, true
 }
 
-func (c *Cache) keyToHash(key interface{}) (uint64, uint64) {
+func (cache *Cache) keyToHash(key interface{}) (uint64, uint64) {
 	if key == nil {
 		return 0, 0
 	}
@@ -232,8 +233,8 @@ func MemHash(data []byte) uint64 {
 	return uint64(memhash(ss.str, 0, uintptr(ss.len)))
 }
 
-func (c *Cache) String() string {
+func (cache *Cache) String() string {
 	var s string
-	s += c.lru.String() + " | " + c.slru.String()
+	s += cache.wlru.String() + " | " + cache.slru.String()
 	return s
 }
