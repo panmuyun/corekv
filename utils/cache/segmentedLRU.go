@@ -90,6 +90,7 @@ func (slru *segmentedLRU) Len() int {
 	return slru.stageTwo.Len() + slru.stageOne.Len()
 }
 
+// 返回淘汰者，但此时并没有进行淘汰操作
 func (slru *segmentedLRU) victim() *storeItem {
 	//如果 slru 的容量未满，不需要淘汰
 	if slru.Len() < slru.stageOneCap+slru.stageTwoCap {

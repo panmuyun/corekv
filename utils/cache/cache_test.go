@@ -29,3 +29,22 @@ func TestCacheBasicCRUD(t *testing.T) {
 	}
 	fmt.Printf("at last: %s\n", cache)
 }
+
+func TestCacheSetRepeatedKey(t *testing.T) {
+	cache := NewCache(5)
+	for i := 0; i < 5; i++ {
+		SET(cache, i, i)
+	}
+	SET(cache, 0, 10)
+	SET(cache, 5, 5)
+	SET(cache, 5, 15)
+	SET(cache, 1, 11)
+	fmt.Printf("at last: %s\n", cache)
+}
+
+func SET(cache *Cache, k int, v int) {
+	key := fmt.Sprintf("key%d", k)
+	val := fmt.Sprintf("val%d", v)
+	cache.Set(key, val)
+	fmt.Printf("set %s: %s\n", key, cache)
+}

@@ -62,9 +62,9 @@ func (cmsketch *cmSketch) Estimate(hashed uint64) int64 {
 }
 
 // 保鲜机制，将所有counter的计数减半
-func (cmsketch *cmSketch) Reset() {
+func (cmsketch *cmSketch) Halve() {
 	for _, row := range cmsketch.rows {
-		row.reset()
+		row.halve()
 	}
 }
 
@@ -113,7 +113,7 @@ func (cmrow cmRow) increment(n uint64) {
 }
 
 // 保鲜机制，将所有counter的计数减半
-func (cmrow cmRow) reset() {
+func (cmrow cmRow) halve() {
 	for i := range cmrow {
 		cmrow[i] = (cmrow[i] >> 1) & 0x77 // 0x77: 0111 0111,使得每个4bit的最高位置0.
 	}

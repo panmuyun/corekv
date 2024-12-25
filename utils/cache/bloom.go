@@ -78,6 +78,7 @@ func (f *BloomFilter) Insert(h uint32) bool {
 	return true
 }
 
+// 返回key是否在bloomfilter中已经存在。不存在时将其插入到bloomfilter中
 func (f *BloomFilter) AllowKey(k []byte) bool {
 	if f == nil {
 		return true
@@ -89,6 +90,7 @@ func (f *BloomFilter) AllowKey(k []byte) bool {
 	return already
 }
 
+// 返回key的哈希值h是否在bloomfilter中已经存在。不存在时将其插入到bloomfilter中
 func (f *BloomFilter) Allow(h uint32) bool {
 	if f == nil {
 		return true
@@ -100,7 +102,8 @@ func (f *BloomFilter) Allow(h uint32) bool {
 	return already
 }
 
-func (f *BloomFilter) reset() {
+// 将bloomfilter的bitmap清空
+func (f *BloomFilter) clear() {
 	if f == nil {
 		return
 	}

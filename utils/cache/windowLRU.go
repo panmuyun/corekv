@@ -47,10 +47,12 @@ func (wlru *windowLRU) add(newitem storeItem) (eitem storeItem, evicted bool) {
 	return eitem, true
 }
 
+// 将v指向的Element移到wlru.list的最前面。如果该Element不在list中，则不对list有任何操作
 func (wlru *windowLRU) get(v *list.Element) {
 	wlru.list.MoveToFront(v)
 }
 
+// 从前到后打印wlru.list
 func (wlru *windowLRU) String() string {
 	var s string
 	for e := wlru.list.Front(); e != nil; e = e.Next() {
