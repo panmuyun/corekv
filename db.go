@@ -205,6 +205,7 @@ func (db *DB) RunValueLogGC(discardRatio float64) error {
 	return db.vlog.runGC(discardRatio, &head)
 }
 
+// 根据db.opt.ValueThreshold判断写入到LSM的SST文件中，还是vlog文件
 func (db *DB) shouldWriteValueToLSM(e *utils.Entry) bool {
 	return int64(len(e.Value)) < db.opt.ValueThreshold
 }
@@ -232,7 +233,7 @@ func (db *DB) sendToWriteCh(entries []*utils.Entry) (*request, error) {
 	return req, nil
 }
 
-//   Check(kv.BatchSet(entries))
+// Check(kv.BatchSet(entries))
 func (db *DB) batchSet(entries []*utils.Entry) error {
 	req, err := db.sendToWriteCh(entries)
 	if err != nil {

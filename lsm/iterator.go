@@ -430,7 +430,10 @@ func NewMergeIterator(iters []utils.Iterator, reverse bool) utils.Iterator {
 		mi.small = &mi.left
 		return mi
 	}
+	// 将迭代器列表分成两半
 	mid := len(iters) / 2
+	// 递归地创建两个 MergeIterator，分别处理迭代器列表的前半部分和后半部分，
+	// 然后将这两个 MergeIterator 合并成一个新的 MergeIterator 并返回。
 	return NewMergeIterator(
 		[]utils.Iterator{
 			NewMergeIterator(iters[:mid], reverse),

@@ -31,9 +31,9 @@ const (
 )
 
 type ValuePtr struct {
-	Len    uint32
-	Offset uint32
-	Fid    uint32
+	Len    uint32 // 内容的字节长度
+	Offset uint32 // 该value在内存池中的起始地址|| 该value在vlog文件中的起始地址
+	Fid    uint32 // nil || value的内容存在哪个vlog文件内
 }
 
 func (p ValuePtr) Less(o *ValuePtr) bool {
@@ -142,6 +142,7 @@ func IsDeletedOrExpired(meta byte, expiresAt uint64) bool {
 	return expiresAt <= uint64(time.Now().Unix())
 }
 
+// 判断 entry 是否过期/可删除
 func DiscardEntry(e, vs *Entry) bool {
 	// TODO 版本这个信息应该被弱化掉 在后面上MVCC或者多版本查询的时候再考虑
 	// if vs.Version != ParseTs(e.Key) {

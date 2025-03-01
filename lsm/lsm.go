@@ -6,34 +6,34 @@ import (
 
 // LSM _
 type LSM struct {
-	memTable   *memTable
-	immutables []*memTable
-	levels     *levelManager
-	option     *Options
-	closer     *utils.Closer
-	maxMemFID  uint32
+	memTable   *memTable     // 指向MemTable的指针
+	immutables []*memTable   // 指针切片。存储了一组不可变的MemTable。当MemTable满时，它会被转换为Immutable MemTable并添加到这个队列中。
+	levels     *levelManager //指向层级管理器的指针。层级管理器负责管理 LSM 树中的不同层级的 SSTable（Sorted String Table）文件。
+	option     *Options      //指向配置选项的指针。这个配置选项包含了 LSM 树运行时的各种参数设置。
+	closer     *utils.Closer //用于资源回收的信号控制。utils.Closer 可能是一个用于管理并发关闭操作的工具。
+	maxMemFID  uint32        //最大内存文件ID，可能用于标识内存表或相关文件。
 }
 
-//Options _
+// Options _
 type Options struct {
-	WorkDir      string
-	MemTableSize int64
-	SSTableMaxSz int64
+	WorkDir      string //工作目录，即 LSM 树数据文件的存储位置。
+	MemTableSize int64  //内存表的最大大小（以字节为单位）。当内存表达到这个大小时，需要将其转换为不可变内存表或 SSTable。
+	SSTableMaxSz int64  //每个 SSTable 文件的最大大小（以字节为单位）。当某个层级的 SSTable 文件达到这个大小时，可能需要进行合并操作。
 	// BlockSize is the size of each block inside SSTable in bytes.
-	BlockSize int
+	BlockSize int //每个 SSTable 块的大小（以字节为单位）。
 	// BloomFalsePositive is the false positive probabiltiy of bloom filter.
-	BloomFalsePositive float64
+	BloomFalsePositive float64 //布隆过滤器的假阳性概率。
 
-	// compact
-	NumCompactors       int
-	BaseLevelSize       int64
-	LevelSizeMultiplier int // 决定level之间期望的size比例
-	TableSizeMultiplier int
-	BaseTableSize       int64
-	NumLevelZeroTables  int
-	MaxLevelNum         int
+	// compact，控制LSM-tree的压缩过程和一些高级配置参数
+	NumCompactors       int   //指定用于执行压缩任务的并发压缩器（compactor）的数量。
+	BaseLevelSize       int64 //指定了基础层（通常是第0层之外的第一层）的预估大小，一般被指定为10兆字节（MB）
+	LevelSizeMultiplier int   // 决定level之间期望的size比例。例如，如果该值为10，那么第1层的SSTable文件大小将是第0层的10倍，依次类推。
+	TableSizeMultiplier int   //用于控制SSTable文件大小的增量倍数。这意味着每个SSTable文件的大小可以是上一个SSTable文件大小的若干倍。
+	BaseTableSize       int64 //定义了SSTable文件的基本大小。这是各级别中最小的SSTable文件的大小。
+	NumLevelZeroTables  int   //指定了第0层中可以存在的SSTable文件的最大数量。
+	MaxLevelNum         int   //表示LSM树结构中最大的层级数量。
 
-	DiscardStatsCh *chan map[uint32]int64
+	DiscardStatsCh *chan map[uint32]int64 //是一个指向通道的指针，该通道用于传递丢弃统计信息。
 }
 
 // Close  _
@@ -150,6 +150,7 @@ func (lsm *LSM) GetSkipListFromMemTable() *utils.Skiplist {
 	return lsm.memTable.sl
 }
 
+// 把lsm.memTable追加到lsm.immutables中，并将lsm.memTable设置为新建的memTable对象
 func (lsm *LSM) Rotate() {
 	lsm.immutables = append(lsm.immutables, lsm.memTable)
 	lsm.memTable = lsm.NewMemtable()

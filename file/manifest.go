@@ -34,32 +34,32 @@ import (
 // manifest 比较特殊，不能使用mmap，需要保证实时的写入
 type ManifestFile struct {
 	opt                       *Options
-	f                         *os.File
-	lock                      sync.Mutex
-	deletionsRewriteThreshold int
-	manifest                  *Manifest
+	f                         *os.File   //表示打开的文件描述符，ManifestFile使用这个文件来存储和读取SST文件的元信息
+	lock                      sync.Mutex //用于在多线程环境下对ManifestFile进行操作时提供互斥访问
+	deletionsRewriteThreshold int        //表示当删除操作达到这个阈值时，需要重新写入Manifest文件
+	manifest                  *Manifest  //指向一个Manifest对象，用于存储实际的元信息数据
 }
 
 // Manifest corekv 元数据状态维护
 type Manifest struct {
-	Levels    []levelManifest
-	Tables    map[uint64]TableManifest
-	Creations int
-	Deletions int
+	Levels    []levelManifest          //表示不同层次的levelManifest。每一层levelManifest存储该层的SSTable信息
+	Tables    map[uint64]TableManifest //一个映射，键是SSTable的ID（类型为uint64），值是TableManifest类型的结构体。
+	Creations int                      //表示创建SSTable的次数
+	Deletions int                      //表示删除SSTable的次数
 }
 
 // TableManifest 包含sst的基本信息
 type TableManifest struct {
-	Level    uint8
+	Level    uint8  //表示SSTable所在的层次
 	Checksum []byte // 方便今后扩展
 }
 type levelManifest struct {
-	Tables map[uint64]struct{} // Set of table id's
+	Tables map[uint64]struct{} // Set of table id's。这种映射通常被称为集合（set），用于快速判断一个SSTable的ID是否存在于该层中
 }
 
-//TableMeta sst 的一些元信息
+// TableMeta sst 的一些元信息
 type TableMeta struct {
-	ID       uint64
+	ID       uint64 //表示SSTable的唯一标识符
 	Checksum []byte
 }
 
@@ -68,7 +68,7 @@ func OpenManifestFile(opt *Options) (*ManifestFile, error) {
 	path := filepath.Join(opt.Dir, utils.ManifestFilename)
 	mf := &ManifestFile{lock: sync.Mutex{}, opt: opt}
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	// 如果打开失败 则尝试创建一个新的 manifest file
+	// 如果os.OpenFile返回的错误不是因为文件不存在，那么就会直接返回这个错误; 否则尝试创建一个新的 manifest file
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return mf, err
@@ -108,6 +108,8 @@ func OpenManifestFile(opt *Options) (*ManifestFile, error) {
 // ReplayManifestFile 对已经存在的manifest文件重新应用所有状态变更
 func ReplayManifestFile(fp *os.File) (ret *Manifest, truncOffset int64, err error) {
 	r := &bufReader{reader: bufio.NewReader(fp)}
+	//读取文件开头的8字节作为魔法字节（magicBuf），用于标识文件格式。
+	//如果读取失败或者魔法字节不匹配，函数会返回一个空的Manifest对象、偏移量0和一个错误。
 	var magicBuf [8]byte
 	if _, err := io.ReadFull(r, magicBuf[:]); err != nil {
 		return &Manifest{}, 0, utils.ErrBadMagic
@@ -115,15 +117,16 @@ func ReplayManifestFile(fp *os.File) (ret *Manifest, truncOffset int64, err erro
 	if !bytes.Equal(magicBuf[0:4], utils.MagicText[:]) {
 		return &Manifest{}, 0, utils.ErrBadMagic
 	}
+	//检查文件的版本号
 	version := binary.BigEndian.Uint32(magicBuf[4:8])
 	if version != uint32(utils.MagicVersion) {
 		return &Manifest{}, 0,
 			fmt.Errorf("manifest has unsupported version: %d (we support %d)", version, utils.MagicVersion)
 	}
-
+	//创建一个空的Manifest对象build，用于存储解析后的数据
 	build := createManifest()
 	var offset int64
-	for {
+	for { // 逐次读取并解析文件中的ChangeSet
 		offset = r.count
 		var lenCrcBuf [8]byte
 		_, err := io.ReadFull(r, lenCrcBuf[:])
@@ -160,6 +163,7 @@ func ReplayManifestFile(fp *os.File) (ret *Manifest, truncOffset int64, err erro
 
 // This is not a "recoverable" error -- opening the KV store fails because the MANIFEST file is
 // just plain broken.
+// 将ChangeSet应用到Manifest对象中，补充Tables、Creations等字段的值
 func applyChangeSet(build *Manifest, changeSet *pb.ManifestChangeSet) error {
 	for _, change := range changeSet.Changes {
 		if err := applyManifestChange(build, change); err != nil {
@@ -198,6 +202,7 @@ func applyManifestChange(build *Manifest, tc *pb.ManifestChange) error {
 	return nil
 }
 
+// 新建并返回一个Manifest对象
 func createManifest() *Manifest {
 	levels := make([]levelManifest, 0)
 	return &Manifest{
@@ -251,6 +256,7 @@ func (mf *ManifestFile) rewrite() error {
 	return nil
 }
 
+// 将一个Manifest结构体的内容重写到指定目录的文件中
 func helpRewrite(dir string, m *Manifest) (*os.File, int, error) {
 	rewritePath := filepath.Join(dir, utils.ManifestRewriteFilename)
 	// We explicitly sync.
@@ -260,14 +266,14 @@ func helpRewrite(dir string, m *Manifest) (*os.File, int, error) {
 	}
 
 	buf := make([]byte, 8)
-	copy(buf[0:4], utils.MagicText[:])
-	binary.BigEndian.PutUint32(buf[4:8], uint32(utils.MagicVersion))
+	copy(buf[0:4], utils.MagicText[:])                               //将utils.MagicText的前4个字节复制到buf的前4个字节位置。utils.MagicText通常是一个用于识别文件类型的魔数。
+	binary.BigEndian.PutUint32(buf[4:8], uint32(utils.MagicVersion)) //将utils.MagicVersion以大端模式写入buf的后4个字节位置
 
 	netCreations := len(m.Tables)
 	changes := m.asChanges()
-	set := pb.ManifestChangeSet{Changes: changes}
+	set := pb.ManifestChangeSet{Changes: changes} //ManifestChangeSet用于表示Manifest文件的更改集合，记录每次更改操作
 
-	changeBuf, err := set.Marshal()
+	changeBuf, err := set.Marshal() //将ManifestChangeSet实例序列化为字节切片changeBuf
 	if err != nil {
 		fp.Close()
 		return nil, 0, err
@@ -277,11 +283,11 @@ func helpRewrite(dir string, m *Manifest) (*os.File, int, error) {
 	binary.BigEndian.PutUint32(lenCrcBuf[4:8], crc32.Checksum(changeBuf, utils.CastagnoliCrcTable))
 	buf = append(buf, lenCrcBuf[:]...)
 	buf = append(buf, changeBuf...)
-	if _, err := fp.Write(buf); err != nil {
+	if _, err := fp.Write(buf); err != nil { //将buf中的内容写入到之前打开的文件中
 		fp.Close()
 		return nil, 0, err
 	}
-	if err := fp.Sync(); err != nil {
+	if err := fp.Sync(); err != nil { //确保所有数据都被写入磁盘
 		fp.Close()
 		return nil, 0, err
 	}
@@ -291,23 +297,23 @@ func helpRewrite(dir string, m *Manifest) (*os.File, int, error) {
 		return nil, 0, err
 	}
 	manifestPath := filepath.Join(dir, utils.ManifestFilename)
-	if err := os.Rename(rewritePath, manifestPath); err != nil {
+	if err := os.Rename(rewritePath, manifestPath); err != nil { //将临时文件重命名为正式的Manifest文件名
 		return nil, 0, err
 	}
-	fp, err = os.OpenFile(manifestPath, utils.DefaultFileFlag, utils.DefaultFileMode)
+	fp, err = os.OpenFile(manifestPath, utils.DefaultFileFlag, utils.DefaultFileMode) //重新打开文件
 	if err != nil {
 		return nil, 0, err
 	}
-	if _, err := fp.Seek(0, io.SeekEnd); err != nil {
+	if _, err := fp.Seek(0, io.SeekEnd); err != nil { //通过将文件指针移动到文件末尾来获取文件大小
 		fp.Close()
 		return nil, 0, err
 	}
-	if err := utils.SyncDir(dir); err != nil {
+	if err := utils.SyncDir(dir); err != nil { //同步目录。确保目录信息也被写入磁盘
 		fp.Close()
 		return nil, 0, err
 	}
 
-	return fp, netCreations, nil
+	return fp, netCreations, nil //netCreations代表表格数量
 }
 
 // Close 关闭文件
@@ -354,7 +360,7 @@ func (mf *ManifestFile) addChanges(changesParam []*pb.ManifestChange) error {
 	return err
 }
 
-// AddTableMeta 存储level表到manifest的level中
+// AddTableMeta 更新manifest文件：增加新change
 func (mf *ManifestFile) AddTableMeta(levelNum int, t *TableMeta) (err error) {
 	mf.addChanges([]*pb.ManifestChange{
 		newCreateChange(t.ID, levelNum, t.Checksum),

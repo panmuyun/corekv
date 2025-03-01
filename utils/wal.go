@@ -46,7 +46,7 @@ func (h WalHeader) Encode(out []byte) int {
 func (h *WalHeader) Decode(reader *HashReader) (int, error) {
 	var err error
 
-	klen, err := binary.ReadUvarint(reader)
+	klen, err := binary.ReadUvarint(reader) //binary.ReadUvarint 函数本身并不直接依赖于 HashReader，它只需要一个实现了 io.Reader 接口的对象来读取变长的无符号整数
 	if err != nil {
 		return 0, err
 	}
@@ -70,6 +70,7 @@ func (h *WalHeader) Decode(reader *HashReader) (int, error) {
 	return reader.BytesRead, nil
 }
 
+// 将e的内容追加到buf中;
 // WalCodec 写入wal文件的编码
 // | header | key | value | crc32 |
 func WalCodec(buf *bytes.Buffer, e *Entry) int {
@@ -103,14 +104,15 @@ func EstimateWalCodecSize(e *Entry) int {
 		crc32.Size + maxHeaderSize
 }
 
+// HashReader 的主要目的是在读取数据的同时计算数据的哈希值，以确保数据的完整性和一致性
 type HashReader struct {
 	R         io.Reader
-	H         hash.Hash32
-	BytesRead int // Number of bytes read.
+	H         hash.Hash32 //一个哈希计算器，用于读取数据的同时计算数据的CRC32哈希值
+	BytesRead int         // Number of bytes read.
 }
 
 func NewHashReader(r io.Reader) *HashReader {
-	hash := crc32.New(CastagnoliCrcTable)
+	hash := crc32.New(CastagnoliCrcTable) //初始化一个新的CRC32哈希计算器，该计算器会按照CastagnoliCrcTable所定义的规则来计算数据的哈希值
 	return &HashReader{
 		R: r,
 		H: hash,

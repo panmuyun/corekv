@@ -29,12 +29,12 @@ import (
 
 // WalFile _
 type WalFile struct {
-	lock    *sync.RWMutex
-	f       *MmapFile
+	lock    *sync.RWMutex //读写锁的指针，用于在多线程环境中对 WalFile 进行并发控制
+	f       *MmapFile     //表示通过内存映射（Memory Mapping）方式访问的文件
 	opts    *Options
-	buf     *bytes.Buffer
-	size    uint32
-	writeAt uint32
+	buf     *bytes.Buffer //用于在内存中进行字节数据的读写操作
+	size    uint32        //表示 WalFile 的总大小
+	writeAt uint32        //表示当前写操作的位置，即下次写操作将在文件的哪个位置开始
 }
 
 // Fid _
@@ -76,7 +76,7 @@ func (wf *WalFile) Write(entry *utils.Entry) error {
 	// 序列化为磁盘结构
 	wf.lock.Lock()
 	plen := utils.WalCodec(wf.buf, entry)
-	buf := wf.buf.Bytes()
+	buf := wf.buf.Bytes() //返回bytes.Buffer对象中所有已写入的数据
 	utils.Panic(wf.f.AppendBuffer(wf.writeAt, buf))
 	wf.writeAt += uint32(plen)
 	wf.lock.Unlock()
@@ -86,7 +86,8 @@ func (wf *WalFile) Write(entry *utils.Entry) error {
 // Iterate 从磁盘中遍历wal，获得数据
 func (wf *WalFile) Iterate(readOnly bool, offset uint32, fn utils.LogEntry) (uint32, error) {
 	// For now, read directly from file, because it allows
-	reader := bufio.NewReader(wf.f.NewReader(int(offset)))
+	// bufio.Reader 会从底层的 io.Reader 中读取一定量的数据到缓冲区中，然后应用程序可以多次从缓冲区中读取数据，而不需要每次都调用底层的读取操作
+	reader := bufio.NewReader(wf.f.NewReader(int(offset))) //创建一个新的缓冲读取器（bufio.Reader），用于从指定的偏移量开始读取 WAL 文件的内容
 	read := SafeRead{
 		K:            make([]byte, 10),
 		V:            make([]byte, 10),
@@ -176,6 +177,7 @@ func (r *SafeRead) MakeEntry(reader io.Reader) (*utils.Entry, error) {
 		}
 		return nil, err
 	}
+	e.Meta = h.Meta //新增
 	e.Key = buf[:h.KeyLen]
 	e.Value = buf[h.KeyLen:]
 	var crcBuf [crc32.Size]byte

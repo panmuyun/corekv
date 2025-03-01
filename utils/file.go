@@ -99,7 +99,7 @@ func LoadIDMap(dir string) map[uint64]struct{} {
 }
 
 // CompareKeys checks the key without timestamp and checks the timestamp if keyNoTs
-// is same.
+// is same.   CompareKeys 函数在不考虑时间戳的情况下比较键，并在键（不带时间戳）相同的情况下比较时间戳。
 // a<timestamp> would be sorted higher than aa<timestamp> if we use bytes.compare
 // All keys should have timestamp.
 func CompareKeys(key1, key2 []byte) int {

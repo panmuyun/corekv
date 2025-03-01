@@ -22,6 +22,7 @@ type LogFile struct {
 	f    *MmapFile
 }
 
+// 更新LogFile对象（lf）的字段
 func (lf *LogFile) Open(opt *Options) error {
 	var err error
 	lf.FID = uint32(opt.FID)

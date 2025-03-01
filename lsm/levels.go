@@ -26,11 +26,11 @@ func (lsm *LSM) initLevelManager(opt *Options) *levelManager {
 type levelManager struct {
 	maxFID       uint64 // 已经分配出去的最大fid，只要创建了memtable 就算已分配
 	opt          *Options
-	cache        *cache
+	cache        *cache //cache 用于存储在内存中的数据
 	manifestFile *file.ManifestFile
-	levels       []*levelHandler
+	levels       []*levelHandler //levelHandler 结构体切片，每个 levelHandler 代表分层存储系统中的一个层级
 	lsm          *LSM
-	compactState *compactStatus
+	compactState *compactStatus //compactStatus 用于记录当前的压缩状态
 }
 
 func (lm *levelManager) close() error {
@@ -98,7 +98,7 @@ func (lm *levelManager) build() error {
 	if err := lm.manifestFile.RevertToManifest(utils.LoadIDMap(lm.opt.WorkDir)); err != nil {
 		return err
 	}
-	// 逐一加载sstable 的index block 构建cache
+	// 逐一加载sstable 的index、block，构建cache
 	lm.cache = newCache(lm.opt)
 	// TODO 初始化的时候index 结构放在了table中，相当于全部加载到了内存，减少了一次读磁盘，但增加了内存消耗
 	var maxFID uint64
@@ -141,19 +141,19 @@ func (lm *levelManager) flush(immutable *memTable) (err error) {
 	})
 	// manifest写入失败直接panic
 	utils.Panic(err)
-	// 更新manifest文件
+	// 更新lh.Tables
 	lm.levels[0].add(table)
 	return
 }
 
-//--------- level处理器 -------
+// --------- level处理器 -------
 type levelHandler struct {
 	sync.RWMutex
-	levelNum       int
-	tables         []*table
-	totalSize      int64
-	totalStaleSize int64
-	lm             *levelManager
+	levelNum       int           //表示当前层级的编号
+	tables         []*table      //指向 table 类型结构体的指针切片，表示当前层级包含的所有表
+	totalSize      int64         //表示当前层级中所有表的总大小
+	totalStaleSize int64         //表示当前层级中所有过时数据的总大小
+	lm             *levelManager //指向 levelManager 类型结构体的指针，表示与当前层级相关的管理器
 }
 
 func (lh *levelHandler) close() error {
@@ -209,6 +209,7 @@ func (lh *levelHandler) Get(key []byte) (*utils.Entry, error) {
 	}
 }
 
+// 对于L0层，按照fid对SSTable排序（新添加的表的fid更大）; 其他层，按照MinKey对SSTable排序
 func (lh *levelHandler) Sort() {
 	lh.Lock()
 	defer lh.Unlock()
@@ -268,6 +269,7 @@ type levelHandlerRLocked struct{}
 // overlappingTables returns the tables that intersect with key range. Returns a half-interval.
 // This function should already have acquired a read lock, and this is so important the caller must
 // pass an empty parameter declaring such.
+// 用于查找与给定键范围（keyRange）相交的表，并返回一个半开区间[left, right)
 func (lh *levelHandler) overlappingTables(_ levelHandlerRLocked, kr keyRange) (int, int) {
 	if len(kr.left) == 0 || len(kr.right) == 0 {
 		return 0, 0

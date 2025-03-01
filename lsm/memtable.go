@@ -35,10 +35,10 @@ const walFileExt string = ".wal"
 // MemTable
 type memTable struct {
 	lsm        *LSM
-	wal        *file.WalFile
+	wal        *file.WalFile //WalFile 代表的是Write-Ahead Log文件，这是一种用于确保数据持久化的技术。日志文件会先于数据文件进行更新，这样即使系统崩溃，也可以通过日志文件恢复数据
 	sl         *utils.Skiplist
-	buf        *bytes.Buffer
-	maxVersion uint64
+	buf        *bytes.Buffer //bytes.Buffer 是Go语言标准库中的一个缓冲区，用于高效地处理字节数据的读写操作。在这里，它可能被用于临时存储数据。
+	maxVersion uint64        //表示内存表中数据的最大版本号
 }
 
 // NewMemtable _
@@ -94,7 +94,7 @@ func (m *memTable) Size() int64 {
 	return m.sl.MemSize()
 }
 
-//recovery
+// recovery
 func (lsm *LSM) recovery() (*memTable, []*memTable) {
 	// 从 工作目录中获取所有文件
 	files, err := ioutil.ReadDir(lsm.option.WorkDir)
@@ -110,7 +110,7 @@ func (lsm *LSM) recovery() (*memTable, []*memTable) {
 			continue
 		}
 		fsz := len(file.Name())
-		fid, err := strconv.ParseUint(file.Name()[:fsz-len(walFileExt)], 10, 64)
+		fid, err := strconv.ParseUint(file.Name()[:fsz-len(walFileExt)], 10, 64) //从文件名中解析出一个无符号64位整数（uint64）
 		// 考虑 wal文件的存在 更新maxFid
 		if maxFid < fid {
 			maxFid = fid

@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 // Copyright 2021 hardcore-os Project Authors
@@ -31,21 +32,21 @@ import (
 
 // SSTable 文件的内存封装
 type SSTable struct {
-	lock           *sync.RWMutex
-	f              *MmapFile
-	maxKey         []byte
-	minKey         []byte
-	idxTables      *pb.TableIndex
-	hasBloomFilter bool
-	idxLen         int
-	idxStart       int
-	fid            uint64
-	createdAt      time.Time
+	lock           *sync.RWMutex  //读写锁，允许多个读取者同时访问，但在写入时只允许一个写入者
+	f              *MmapFile      //指向 MmapFile 类型的指针，表示通过内存映射（Memory Mapping）方式打开的文件
+	maxKey         []byte         //表示 SSTable 中最大键的值
+	minKey         []byte         //表示 SSTable 中最小键的值
+	idxTables      *pb.TableIndex //表示 SSTable 的索引表（存储键值对的位置信息）。存储的是反序列化后
+	hasBloomFilter bool           //表示 SSTable 是否包含布隆过滤器（Bloom Filter）
+	idxLen         int            //表示索引表的长度，即索引表中包含的索引项的数量
+	idxStart       int            //表示索引表在文件中的起始位置
+	fid            uint64         //SSTable 文件的唯一标识符
+	createdAt      time.Time      //表示 SSTable 文件的创建时间
 }
 
-// OpenSStable 打开一个 sst文件
+// OpenSStable 以内存映射的方式打开一个 sst文件（OpenMmapFile）
 func OpenSStable(opt *Options) *SSTable {
-	omf, err := OpenMmapFile(opt.FileName, os.O_CREATE|os.O_RDWR, opt.MaxSz)
+	omf, err := OpenMmapFile(opt.FileName, os.O_CREATE|os.O_RDWR, opt.MaxSz) //以读写模式打开文件，并在文件不存在时创建文件
 	utils.Err(err)
 	return &SSTable{f: omf, fid: opt.FID, lock: &sync.RWMutex{}}
 }
@@ -74,8 +75,10 @@ func (ss *SSTable) Init() error {
 func (ss *SSTable) SetMaxKey(maxKey []byte) {
 	ss.maxKey = maxKey
 }
+
+// 初始化，给SSTable对象的各个属性赋值。返回indexTable中的第一个BlockOffset
 func (ss *SSTable) initTable() (bo *pb.BlockOffset, err error) {
-	readPos := len(ss.f.Data)
+	readPos := len(ss.f.Data) //readPos指向内存映射区的下一个字节
 
 	// Read checksum len from the last 4 bytes.
 	readPos -= 4
@@ -102,14 +105,14 @@ func (ss *SSTable) initTable() (bo *pb.BlockOffset, err error) {
 		return nil, errors.Wrapf(err, "failed to verify checksum for table: %s", ss.f.Fd.Name())
 	}
 	indexTable := &pb.TableIndex{}
-	if err := proto.Unmarshal(data, indexTable); err != nil {
+	if err := proto.Unmarshal(data, indexTable); err != nil { //将index_data部分的内容 反序列化 为 pb.TableIndex 类型的 indexTable 对象
 		return nil, err
 	}
 	ss.idxTables = indexTable
 
 	ss.hasBloomFilter = len(indexTable.BloomFilter) > 0
-	if len(indexTable.GetOffsets()) > 0 {
-		return indexTable.GetOffsets()[0], nil
+	if len(indexTable.GetOffsets()) > 0 { //检查偏移量列表是否为空
+		return indexTable.GetOffsets()[0], nil //如果不为空，返回第一个偏移量
 	}
 	return nil, errors.New("read index fail, offset is nil")
 }
@@ -119,7 +122,7 @@ func (ss *SSTable) Close() error {
 	return ss.f.Close()
 }
 
-// Indexs _
+// 返回ss.idxTables
 func (ss *SSTable) Indexs() *pb.TableIndex {
 	return ss.idxTables
 }
@@ -144,6 +147,7 @@ func (ss *SSTable) HasBloomFilter() bool {
 	return ss.hasBloomFilter
 }
 
+// 在SSTable中从偏移量off开始读取sz大小的数据
 func (ss *SSTable) read(off, sz int) ([]byte, error) {
 	if len(ss.f.Data) > 0 {
 		if len(ss.f.Data[off:]) < sz {
@@ -156,6 +160,8 @@ func (ss *SSTable) read(off, sz int) ([]byte, error) {
 	_, err := ss.f.Fd.ReadAt(res, int64(off))
 	return res, err
 }
+
+// 调用read(off, sz int)。如果发生任何错误，程序会立即停止并报告错误
 func (ss *SSTable) readCheckError(off, sz int) []byte {
 	buf, err := ss.read(off, sz)
 	utils.Panic(err)
@@ -164,6 +170,7 @@ func (ss *SSTable) readCheckError(off, sz int) []byte {
 
 // Bytes returns data starting from offset off of size sz. If there's not enough data, it would
 // return nil slice and io.EOF.
+// 返回SSTable对应的MmapFile.Data[off : off+sz]
 func (ss *SSTable) Bytes(off, sz int) ([]byte, error) {
 	return ss.f.Bytes(off, sz)
 }

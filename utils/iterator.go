@@ -14,7 +14,7 @@
 
 package utils
 
-// Iterator 迭代器
+// Iterator 迭代器：tableIterator
 type Iterator interface {
 	Next()
 	Valid() bool
@@ -33,5 +33,5 @@ type Item interface {
 // TODO 可能被重构
 type Options struct {
 	Prefix []byte
-	IsAsc  bool
+	IsAsc  bool //是否是升序（Ascend），默认为false
 }

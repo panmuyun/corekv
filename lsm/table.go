@@ -34,10 +34,12 @@ import (
 type table struct {
 	ss  *file.SSTable
 	lm  *levelManager
-	fid uint64
-	ref int32 // For file garbage collection. Atomic.
+	fid uint64 //文件的唯一标识符，方便在系统中查找和操作特定的文件
+	ref int32  // For file garbage collection. Atomic.
 }
 
+// 创建SSTable对象（包括创建mmap文件，并关联一块内存区域）
+// builder对象存在时，执行builder的flush方法序列化数据到SSTable。否则打开一个已经存在的SSTable文件，并对其初始化
 func openTable(lm *levelManager, tableName string, builder *tableBuilder) *table {
 	sstSize := int(lm.opt.SSTableMaxSz)
 	if builder != nil {
@@ -61,7 +63,7 @@ func openTable(lm *levelManager, tableName string, builder *tableBuilder) *table
 			FileName: tableName,
 			Dir:      lm.opt.WorkDir,
 			Flag:     os.O_CREATE | os.O_RDWR,
-			MaxSz:    int(sstSize)})
+			MaxSz:    int(sstSize)}) //用于限制SStable文件的大小
 	}
 	// 先要引用一下，否则后面使用迭代器会导致引用状态错误
 	t.IncrRef()
@@ -76,7 +78,7 @@ func openTable(lm *levelManager, tableName string, builder *tableBuilder) *table
 	defer itr.Close()
 	// 定位到初始位置就是最大的key
 	itr.Rewind()
-	utils.CondPanic(!itr.Valid(), errors.Errorf("failed to read index, form maxKey"))
+	utils.CondPanic(!itr.Valid(), errors.Errorf("failed to read index, form maxKey")) //检查迭代器是否有效，如果无效则记录错误信息并抛出错误
 	maxKey := itr.Item().Entry().Key
 	t.ss.SetMaxKey(maxKey)
 
@@ -103,9 +105,9 @@ func (t *table) Serach(key []byte, maxVs *uint64) (entry *utils.Entry, err error
 	}
 
 	if utils.SameKey(key, iter.Item().Entry().Key) {
-		if version := utils.ParseTs(iter.Item().Entry().Key); *maxVs < version {
+		if version := utils.ParseTs(iter.Item().Entry().Key); *maxVs < version { //解析出当前key的时间戳，比较是否比maxVs大，大的话需要更新maxVs
 			*maxVs = version
-			return iter.Item().Entry(), nil
+			return iter.Item().Entry(), nil //返回中找到的entry
 		}
 	}
 	return nil, utils.ErrKeyNotFound
@@ -204,12 +206,12 @@ func (t *table) blockCacheKey(idx int) []byte {
 }
 
 type tableIterator struct {
-	it       utils.Item
-	opt      *utils.Options
-	t        *table
-	blockPos int
-	bi       *blockIterator
-	err      error
+	it       utils.Item     // 存储当前迭代器指向的条目
+	opt      *utils.Options //存储迭代器的配置选项
+	t        *table         //表示当前迭代器正在遍历的表
+	blockPos int            //表示当前迭代器所在的块的位置，以便在块之间进行切换
+	bi       *blockIterator //指向blockIterator结构体的指针，用于在当前块内部进行迭代
+	err      error          //存储在迭代过程中可能遇到的错误
 }
 
 func (t *table) NewIterator(options *utils.Options) utils.Iterator {
@@ -223,12 +225,12 @@ func (t *table) NewIterator(options *utils.Options) utils.Iterator {
 func (it *tableIterator) Next() {
 	it.err = nil
 
-	if it.blockPos >= len(it.t.ss.Indexs().GetOffsets()) {
+	if it.blockPos >= len(it.t.ss.Indexs().GetOffsets()) { //检查是否到达文件末尾
 		it.err = io.EOF
 		return
 	}
 
-	if len(it.bi.data) == 0 {
+	if len(it.bi.data) == 0 { //如果当前块没有数据，则获取下一个块的数据并初始化 blockIterator
 		block, err := it.t.block(it.blockPos)
 		if err != nil {
 			it.err = err
@@ -241,9 +243,9 @@ func (it *tableIterator) Next() {
 		it.err = it.bi.Error()
 		return
 	}
-
-	it.bi.Next()
-	if !it.bi.Valid() {
+	//如果当前块有数据
+	it.bi.Next()        //调用 blockIterator 的 Next 方法移动到下一个条目
+	if !it.bi.Valid() { //检查blockIterator 移动到下一个条目后是否仍然有效
 		it.blockPos++
 		it.bi.data = nil
 		it.Next()
@@ -251,9 +253,14 @@ func (it *tableIterator) Next() {
 	}
 	it.it = it.bi.it
 }
+
+// 判断tableIterator是否还有下一个条目可以被读取
 func (it *tableIterator) Valid() bool {
 	return it.err != io.EOF // 如果没有的时候 则是EOF
 }
+
+// 将迭代器重置到合适的位置，以便遍历表中的条目。
+// IsAsc==true：将迭代器定位到表的第一个条目  IsAsc==false：将迭代器定位到表的最后一个条目
 func (it *tableIterator) Rewind() {
 	if it.opt.IsAsc {
 		it.seekToFirst()
@@ -268,14 +275,16 @@ func (it *tableIterator) Close() error {
 	it.bi.Close()
 	return it.t.DecrRef()
 }
+
+// 将迭代器定位到表的第一个条目
 func (it *tableIterator) seekToFirst() {
 	numBlocks := len(it.t.ss.Indexs().Offsets)
-	if numBlocks == 0 {
+	if numBlocks == 0 { //表中没有数据时
 		it.err = io.EOF
 		return
 	}
-	it.blockPos = 0
-	block, err := it.t.block(it.blockPos)
+	it.blockPos = 0                       //将 it.blockPos 设置为 0，表示从第一个块开始
+	block, err := it.t.block(it.blockPos) //获取第一个块的位置
 	if err != nil {
 		it.err = err
 		return
@@ -288,6 +297,7 @@ func (it *tableIterator) seekToFirst() {
 	it.err = it.bi.Error()
 }
 
+// 将迭代器定位到表的最后一个条目
 func (it *tableIterator) seekToLast() {
 	numBlocks := len(it.t.ss.Indexs().Offsets)
 	if numBlocks == 0 {
@@ -308,17 +318,17 @@ func (it *tableIterator) seekToLast() {
 	it.err = it.bi.Error()
 }
 
-// Seek
-// 二分法搜索 offsets
-// 如果idx == 0 说明key只能在第一个block中 block[0].MinKey <= key
-// 否则 block[0].MinKey > key
-// 如果在 idx-1 的block中未找到key 那才可能在 idx 中
-// 如果都没有，则当前key不再此table
+// Seek：在一个有序的数据集合中查找一个特定的键（key），并定位到该键或其插入位置
+// 二分法搜索 idxTables
+// 如果idx == 0 说明key只能在第一个block中 block[0].MinKey <= key。否则 block[0].MinKey > key
+// 如果在 idx-1 的block中未找到key 那才可能在 idx 中。如果都没有，则当前key不在此table
 func (it *tableIterator) Seek(key []byte) {
 	var ko pb.BlockOffset
+	//sort.Search是二分查找，此处用来查找key在索引中的位置
 	idx := sort.Search(len(it.t.ss.Indexs().GetOffsets()), func(idx int) bool {
+		// 查找并返回第一个i,要求i满足条件：ss.idxTables.offsets[i]对应的key大于要找的key
 		utils.CondPanic(!it.t.offsets(&ko, idx), fmt.Errorf("tableutils.Seek idx < 0 || idx > len(index.GetOffsets()"))
-		if idx == len(it.t.ss.Indexs().GetOffsets()) {
+		if idx == len(it.t.ss.Indexs().GetOffsets()) { //如果当前索引是最后一个偏移量的索引，则返回true。这通常意味着目标键大于索引中的所有键，因此需要插入在末尾
 			return true
 		}
 		return utils.CompareKeys(ko.GetKey(), key) > 0
@@ -330,6 +340,7 @@ func (it *tableIterator) Seek(key []byte) {
 	it.seekHelper(idx-1, key)
 }
 
+// 更新tableIterator.it（迭代器当前指向的条目）、tableIterator.err
 func (it *tableIterator) seekHelper(blockIdx int, key []byte) {
 	it.blockPos = blockIdx
 	block, err := it.t.block(blockIdx)
@@ -345,6 +356,7 @@ func (it *tableIterator) seekHelper(blockIdx int, key []byte) {
 	it.it = it.bi.Item()
 }
 
+// 将ss.idxTables.offsets[i]（索引表的第i个BlockOffset对象）存储在ko指向的BlockOffset变量中
 func (t *table) offsets(ko *pb.BlockOffset, i int) bool {
 	index := t.ss.Indexs()
 	if i < 0 || i > len(index.GetOffsets()) {

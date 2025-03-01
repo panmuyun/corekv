@@ -28,54 +28,60 @@ import (
 	"github.com/hardcore-os/corekv/utils"
 )
 
+// 构建一个表（table）
 type tableBuilder struct {
 	sstSize       int64
-	curBlock      *block
-	opt           *Options
-	blockList     []*block
-	keyCount      uint32
-	keyHashes     []uint32
-	maxVersion    uint64
-	baseKey       []byte
-	staleDataSize int
-	estimateSz    int64
+	curBlock      *block   //指向 block 类型的指针，表示当前正在处理的 block
+	opt           *Options //表示构建表时使用的各种选项或配置
+	blockList     []*block //一个 block 类型指针的切片，表示所有已经构建好的 block 的列表
+	keyCount      uint32   //表示当前表中键（key）的数量
+	keyHashes     []uint32 //表示每个键的哈希值。用来之后生成bloomfilter
+	maxVersion    uint64   //表示表中所有键的最大版本号
+	baseKey       []byte   //block的第一个key作为baseKey
+	staleDataSize int      //表示过时数据的大小。过时数据可能是那些需要被清理或更新的数据。
+	estimateSz    int64    //表示对表最终大小的估计值
 }
+
+// 存储构建表过程中生成的数据
 type buildData struct {
-	blockList []*block
-	index     []byte
-	checksum  []byte
-	size      int
+	blockList []*block //复制tableBuilder.blockList
+	index     []byte   //存储序列化后的indexTable
+	checksum  []byte   //校验和
+	size      int      //记录构建的数据大小
 }
+
 type block struct {
-	offset            int //当前block的offset 首地址
-	checksum          []byte
-	entriesIndexStart int
-	chkLen            int
-	data              []byte
-	baseKey           []byte
-	entryOffsets      []uint32
-	end               int
-	estimateSz        int64
+	offset            int      //当前block的offset，当前block在文件中的起始地址
+	checksum          []byte   //存储数据块的校验和
+	entriesIndexStart int      //标识数据块中条目索引部分的起始位置
+	chkLen            int      //校验和的长度
+	data              []byte   //存储数据块的实际数据内容
+	baseKey           []byte   //存储一个基础键值
+	entryOffsets      []uint32 //32位无符号整数的切片，其中每个元素代表数据块中一个条目的偏移量
+	end               int      //表示数据块的结束位置或者长度
+	estimateSz        int64    //代表数据块的估算大小
 }
 
 type header struct {
-	overlap uint16 // Overlap with base key.
-	diff    uint16 // Length of the diff.
+	overlap uint16 // Overlap with base key.表示与基础键（base key）重叠的部分长度。
+	diff    uint16 // Length of the diff.表示与基础键不重叠的差异部分的长度
 }
 
 const headerSize = uint16(unsafe.Sizeof(header{}))
 
-// Decode decodes the header.
+// Decode decodes the header.使用 copy 函数将 buf 中的前 headerSize 字节复制到 header 结构体中。
 func (h *header) decode(buf []byte) {
 	copy(((*[headerSize]byte)(unsafe.Pointer(h))[:]), buf[:headerSize])
 }
 
+// 将 header 结构体编码为字节切片
 func (h header) encode() []byte {
 	var b [4]byte
 	*(*header)(unsafe.Pointer(&b[0])) = h
 	return b[:]
 }
 
+// 向一个数据表中添加一个新的条目（entry）
 func (tb *tableBuilder) add(e *utils.Entry, isStale bool) {
 	key := e.Key
 	val := utils.ValueStruct{
@@ -115,7 +121,7 @@ func (tb *tableBuilder) add(e *utils.Entry, isStale bool) {
 		overlap: uint16(len(key) - len(diffKey)),
 		diff:    uint16(len(diffKey)),
 	}
-
+	// 向entryOffsets中添加这个entry的起始地址。（上一个entry的结束就是当前entry的开始）
 	tb.curBlock.entryOffsets = append(tb.curBlock.entryOffsets, uint32(tb.curBlock.end))
 
 	tb.append(h.encode())
@@ -137,7 +143,7 @@ func newTableBuiler(opt *Options) *tableBuilder {
 	}
 }
 
-// Empty returns whether it's empty.
+// 根据tableBuilder对象中keyHashes的长度是否为0来判断是否为空
 func (tb *tableBuilder) empty() bool { return len(tb.keyHashes) == 0 }
 
 func (tb *tableBuilder) finish() []byte {
@@ -185,12 +191,16 @@ func (tb *tableBuilder) AddKey(e *utils.Entry) {
 func (tb *tableBuilder) Close() {
 	// 结合内存分配器
 }
+
+// 序列化当前block；
+// 将curBlock的entryOffsets、entryOffsets_len、checksum、checksum_len以字节切片或字节的格式追加到tableBuilder.curBlock.data中；
+// 更新tableBuilder的estimateSz、blockList、keyCount、curBlock属性
 func (tb *tableBuilder) finishBlock() {
 	if tb.curBlock == nil || len(tb.curBlock.entryOffsets) == 0 {
 		return
 	}
 	// Append the entryOffsets and its length.
-	tb.append(utils.U32SliceToBytes(tb.curBlock.entryOffsets))
+	tb.append(utils.U32SliceToBytes(tb.curBlock.entryOffsets)) //将当前数据块中entryOffsets切片转换为字节切片，并将其追加到
 	tb.append(utils.U32ToBytes(uint32(len(tb.curBlock.entryOffsets))))
 
 	checksum := tb.calculateChecksum(tb.curBlock.data[:tb.curBlock.end])
@@ -206,12 +216,13 @@ func (tb *tableBuilder) finishBlock() {
 	return
 }
 
-// append appends to curBlock.data
+// 把data的内容追加到tableBuilder.curBlock.data中
 func (tb *tableBuilder) append(data []byte) {
 	dst := tb.allocate(len(data))
 	utils.CondPanic(len(data) != copy(dst, data), errors.New("tableBuilder.append data"))
 }
 
+// 从tableBuilder.curBlock.data中分配need大小的空间，更新curblock.end，并返回这段空间对应的字节切片
 func (tb *tableBuilder) allocate(need int) []byte {
 	bb := tb.curBlock
 	if len(bb.data[bb.end:]) < need {
@@ -233,6 +244,7 @@ func (tb *tableBuilder) calculateChecksum(data []byte) []byte {
 	return utils.U64ToBytes(checkSum)
 }
 
+// 返回newKey与baseKey有差异的部分
 func (tb *tableBuilder) keyDiff(newKey []byte) []byte {
 	var i int
 	for i = 0; i < len(newKey) && i < len(tb.curBlock.baseKey); i++ {
@@ -247,7 +259,7 @@ func (tb *tableBuilder) keyDiff(newKey []byte) []byte {
 func (tb *tableBuilder) flush(lm *levelManager, tableName string) (t *table, err error) {
 	bd := tb.done()
 	t = &table{lm: lm, fid: utils.FID(tableName)}
-	// 如果没有builder 则创打开一个已经存在的sst文件
+
 	t.ss = file.OpenSStable(&file.Options{
 		FileName: tableName,
 		Dir:      lm.opt.WorkDir,
@@ -264,6 +276,7 @@ func (tb *tableBuilder) flush(lm *levelManager, tableName string) (t *table, err
 	return t, nil
 }
 
+// 将blockList中多个数据块的内容、index、index_len的字节形式、checksum、checksum_len的字节形式复制到一个目标字节切片 dst 中。返回已写入的字节数
 func (bd *buildData) Copy(dst []byte) int {
 	var written int
 	for _, bl := range bd.blockList {
@@ -277,6 +290,7 @@ func (bd *buildData) Copy(dst []byte) int {
 	return written
 }
 
+// 完成SST文件的构建，并返回一个包含构建数据信息的buildData结构体
 func (tb *tableBuilder) done() buildData {
 	tb.finishBlock()
 	if len(tb.blockList) == 0 {
@@ -300,6 +314,7 @@ func (tb *tableBuilder) done() buildData {
 	return bd
 }
 
+// 对tableBuilder.blockList对象序列化后，按序存到tableIndex.Offsets中。返回indexTable的序列化结果
 func (tb *tableBuilder) buildIndex(bloom []byte) ([]byte, uint32) {
 	tableIndex := &pb.TableIndex{}
 	if len(bloom) > 0 {
@@ -346,23 +361,24 @@ func (b block) verifyCheckSum() error {
 }
 
 type blockIterator struct {
-	data         []byte
-	idx          int
-	err          error
-	baseKey      []byte
-	key          []byte
-	val          []byte
-	entryOffsets []uint32
-	block        *block
+	data         []byte   //存储了数据块的具体内容
+	idx          int      //表示当前迭代器在数据块中的位置或索引
+	err          error    //用于存储在迭代过程中可能遇到的任何错误
+	baseKey      []byte   //表示当前迭代的数据块的基准键，这个键可以用于构建其他键
+	key          []byte   //存储了当前迭代到的键
+	val          []byte   //存储了与当前键对应的值
+	entryOffsets []uint32 //uint32 类型的切片，存储了数据块中每个条目的偏移量
+	block        *block   //指向 block 类型的指针，指向当前正在迭代的数据块
 
-	tableID uint64
-	blockID int
+	tableID uint64 //表示数据表的ID，用于标识数据块所属的表
+	blockID int    //表示数据块的ID，用于标识数据块在表中的位置
 
-	prevOverlap uint16
+	prevOverlap uint16 //用于存储前一个键与baseKey的重叠部分的长度
 
-	it utils.Item
+	it utils.Item //存储当前迭代到的键值对
 }
 
+// 根据block对象设置blockIterator对象
 func (itr *blockIterator) setBlock(b *block) {
 	itr.block = b
 	itr.err = nil
@@ -383,6 +399,8 @@ func (itr *blockIterator) seekToFirst() {
 func (itr *blockIterator) seekToLast() {
 	itr.setIdx(len(itr.entryOffsets) - 1)
 }
+
+// 将blockIterator中与entry相关的属性修改为key对应的entry
 func (itr *blockIterator) seek(key []byte) {
 	itr.err = nil
 	startIndex := 0 // This tells from which index we should start binary search.
@@ -398,6 +416,7 @@ func (itr *blockIterator) seek(key []byte) {
 	itr.setIdx(foundEntryIdx)
 }
 
+// 更新blockIterator中与当前entry相关的属性
 func (itr *blockIterator) setIdx(i int) {
 	itr.idx = i
 	if i >= len(itr.entryOffsets) || i < 0 {
@@ -407,7 +426,7 @@ func (itr *blockIterator) setIdx(i int) {
 	itr.err = nil
 	startOffset := int(itr.entryOffsets[i])
 
-	// Set base key.
+	// Set base key. baseKey=第一个entry的diffKey
 	if len(itr.baseKey) == 0 {
 		var baseHeader header
 		baseHeader.decode(itr.data)
@@ -445,7 +464,7 @@ func (itr *blockIterator) setIdx(i int) {
 	itr.prevOverlap = h.overlap
 	valueOff := headerSize + h.diff
 	diffKey := entryData[headerSize:valueOff]
-	itr.key = append(itr.key[:h.overlap], diffKey...)
+	itr.key = append(itr.key[:h.overlap], diffKey...) //在上一个key的基础上更改
 	e := &utils.Entry{Key: itr.key}
 	val := &utils.ValueStruct{}
 	val.DecodeValue(entryData[valueOff:])

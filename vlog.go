@@ -43,25 +43,26 @@ var lfDiscardStatsKey = []byte("!corekv!discard") // For storing lfDiscardStats
 
 // valueLog
 type valueLog struct {
-	dirPath string
+	dirPath string // 存储value_log文件的目录路径
 
 	// guards our view of which files exist, which to be deleted, how many active iterators
-	filesLock        sync.RWMutex
-	filesMap         map[uint32]*file.LogFile
-	maxFid           uint32
-	filesToBeDeleted []uint32
+	filesLock        sync.RWMutex             // 读写锁（保护filesMap/filesToBeDeleted的并发访问）
+	filesMap         map[uint32]*file.LogFile // 文件ID映射到LogFile对象。管理所有已存在的日志文件
+	maxFid           uint32                   // 当前最大的文件ID（用于标识最新日志文件）
+	filesToBeDeleted []uint32                 // 待删除文件ID列表
 	// A refcount of iterators -- when this hits zero, we can delete the filesToBeDeleted.
-	numActiveIterators int32
+	numActiveIterators int32 // 迭代器引用计数（atomic原子操作）
 
-	db                *DB
-	writableLogOffset uint32 // read by read, written by write. Must access via atomics.
-	numEntriesWritten uint32
-	opt               Options
+	db                *DB     // 依赖关系。指向所属数据库实例的指针
+	writableLogOffset uint32  // read by read, written by write. Must access via atomics.当前可写位置偏移量（通过原子操作保证线程安全）
+	numEntriesWritten uint32  // 已写入entry数统计
+	opt               Options // 依赖关系。数据库配置选项的引用
 
-	garbageCh      chan struct{}
-	lfDiscardStats *lfDiscardStats
+	garbageCh      chan struct{}   // 触发垃圾回收的通道
+	lfDiscardStats *lfDiscardStats // 记录日志文件可回收空间的统计信息
 }
 
+// 将e记录到一个从requestPool中复用的request对象中，并调用vlog.write([]*request{req})
 func (vlog *valueLog) newValuePtr(e *utils.Entry) (*utils.ValuePtr, error) {
 	// TODO 尝试使用对象复用，后面entry对象也应该使用
 	req := requestPool.Get().(*request)
@@ -126,7 +127,7 @@ func (vlog *valueLog) open(db *DB, ptr *utils.ValuePtr, replayFn utils.LogEntry)
 		}
 		fmt.Printf("Replay took: %s\n", time.Since(now))
 
-		if fid < vlog.maxFid {
+		if fid < vlog.maxFid { //该文件不是当前正在写入的文件
 			// This file has been replayed. It can now be mmapped.
 			// For maxFid, the mmap would be done by the specially written code below.
 			if err := lf.Init(); err != nil {
@@ -195,7 +196,7 @@ func (vlog *valueLog) write(reqs []*request) error {
 
 	vlog.filesLock.RLock()
 	maxFid := vlog.maxFid
-	curlf := vlog.filesMap[maxFid]
+	curlf := vlog.filesMap[maxFid] // 新数据写入时会追加到maxFid对应的最新日志文件
 	vlog.filesLock.RUnlock()
 
 	var buf bytes.Buffer
@@ -205,10 +206,11 @@ func (vlog *valueLog) write(reqs []*request) error {
 		}
 		data := buf.Bytes()
 		offset := vlog.woffset()
-		if err := curlf.Write(offset, data); err != nil {
+		if err := curlf.Write(offset, data); err != nil { // 将buf中内容写入LogFile对象
 			return errors.Wrapf(err, "Unable to write to value log file: %q", curlf.FileName())
 		}
 		buf.Reset()
+		// 原子性更新vlog对象的字段
 		atomic.AddUint32(&vlog.writableLogOffset, uint32(len(data)))
 		curlf.AddSize(vlog.writableLogOffset)
 		return nil
@@ -217,7 +219,7 @@ func (vlog *valueLog) write(reqs []*request) error {
 		if err := flushWrites(); err != nil {
 			return err
 		}
-		// 切分vlog文件
+		// vlog文件足够大 || vlog文件中的Entry数足够多， 则切分vlog文件
 		if vlog.woffset() > uint32(vlog.opt.ValueLogFileSize) ||
 			vlog.numEntriesWritten > vlog.opt.ValueLogMaxEntries {
 			if err := curlf.DoneWriting(vlog.woffset()); err != nil {
@@ -249,7 +251,7 @@ func (vlog *valueLog) write(reqs []*request) error {
 
 			p.Fid = curlf.FID
 			// Use the offset including buffer length so far.
-			p.Offset = vlog.woffset() + uint32(buf.Len())
+			p.Offset = vlog.woffset() + uint32(buf.Len())     // 记录该Entry的value在vlog文件中的起始地址
 			plen, err := curlf.EncodeEntry(e, &buf, p.Offset) // Now encode the entry into buffer.
 			if err != nil {
 				return err
@@ -360,11 +362,12 @@ func (vlog *valueLog) doRunGC(lf *file.LogFile, discardRatio float64) (err error
 	return nil
 }
 
-//重写
+// 重写：重写旧的 value log 文件，回收无效数据空间
 func (vlog *valueLog) rewrite(f *file.LogFile) error {
 	vlog.filesLock.RLock()
 	maxFid := vlog.maxFid
 	vlog.filesLock.RUnlock()
+	//检查：要重写的文件 FID 必须小于当前最大 FID（不能重写正在写入的新文件）
 	utils.CondPanic(uint32(f.FID) >= maxFid, fmt.Errorf("fid to move: %d. Current max fid: %d", f.FID, maxFid))
 
 	wb := make([]*utils.Entry, 0, 1000)
@@ -377,11 +380,11 @@ func (vlog *valueLog) rewrite(f *file.LogFile) error {
 			fmt.Printf("Processing entry %d\n", count)
 		}
 
-		vs, err := vlog.db.lsm.Get(e.Key)
+		vs, err := vlog.db.lsm.Get(e.Key) //获取key的最新元数据
 		if err != nil {
 			return err
 		}
-		if utils.DiscardEntry(e, vs) {
+		if utils.DiscardEntry(e, vs) { // 判断 entry 是否过期/可删除
 			return nil
 		}
 
@@ -600,14 +603,16 @@ func (vlog *valueLog) getFileRLocked(vp *utils.ValuePtr) (*file.LogFile, error) 
 	return ret, nil
 }
 
+// 原子性读取valueLog.writableLogOffset
 func (vlog *valueLog) woffset() uint32 {
 	return atomic.LoadUint32(&vlog.writableLogOffset)
 }
 
+// 扫描指定目录下的日志文件，并将这些文件的信息存储在vlog.filesMap中
 func (vlog *valueLog) populateFilesMap() error {
 	vlog.filesMap = make(map[uint32]*file.LogFile)
 
-	files, err := ioutil.ReadDir(vlog.dirPath)
+	files, err := ioutil.ReadDir(vlog.dirPath) // 读取目录内容
 	if err != nil {
 		return utils.WarpErr(fmt.Sprintf("Unable to open log dir. path[%s]", vlog.dirPath), err)
 	}
@@ -618,11 +623,11 @@ func (vlog *valueLog) populateFilesMap() error {
 			continue
 		}
 		fsz := len(f.Name())
-		fid, err := strconv.ParseUint(f.Name()[:fsz-5], 10, 32)
+		fid, err := strconv.ParseUint(f.Name()[:fsz-5], 10, 32) //从文件名中解析出fid
 		if err != nil {
 			return utils.WarpErr(fmt.Sprintf("Unable to parse log id. name:[%s]", f.Name()), err)
 		}
-		if _, ok := found[fid]; ok {
+		if _, ok := found[fid]; ok { // 检查是否有重复的fid
 			return utils.WarpErr(fmt.Sprintf("Duplicate file found. Please delete one. name:[%s]", f.Name()), err)
 		}
 		found[fid] = struct{}{}
@@ -631,7 +636,7 @@ func (vlog *valueLog) populateFilesMap() error {
 			FID:  uint32(fid),
 			Lock: sync.RWMutex{},
 		}
-		vlog.filesMap[uint32(fid)] = lf
+		vlog.filesMap[uint32(fid)] = lf // 更新vlog.filesMap
 		if vlog.maxFid < uint32(fid) {
 			vlog.maxFid = uint32(fid)
 		}
@@ -682,30 +687,32 @@ func (vlog *valueLog) createVlogFile(fid uint32) (*file.LogFile, error) {
 
 // sortedFids returns the file id's not pending deletion, sorted.  Assumes we have shared access to
 // filesMap.
+// 获取排好序的有效文件 ID 列表
 func (vlog *valueLog) sortedFids() []uint32 {
 	toBeDeleted := make(map[uint32]struct{})
-	for _, fid := range vlog.filesToBeDeleted {
+	for _, fid := range vlog.filesToBeDeleted { // 收集待删除文件
 		toBeDeleted[fid] = struct{}{}
 	}
 	ret := make([]uint32, 0, len(vlog.filesMap))
 	for fid := range vlog.filesMap {
-		if _, ok := toBeDeleted[fid]; !ok {
+		if _, ok := toBeDeleted[fid]; !ok { // 过滤待删除的文件
 			ret = append(ret, fid)
 		}
 	}
-	sort.Slice(ret, func(i, j int) bool {
+	sort.Slice(ret, func(i, j int) bool { // 稳定排序
 		return ret[i] < ret[j]
 	})
 	return ret
 }
 
+// 从指定的偏移量开始，遍历日志文件并重放其中的日志条目
 func (vlog *valueLog) replayLog(lf *file.LogFile, offset uint32, replayFn utils.LogEntry) error {
 	// Alright, let's iterate now.
-	endOffset, err := vlog.iterate(lf, offset, replayFn)
+	endOffset, err := vlog.iterate(lf, offset, replayFn) //遍历日志文件，从指定的偏移量开始，逐条处理日志条目，并调用 replayFn 函数进行处理
 	if err != nil {
 		return errors.Wrapf(err, "Unable to replay logfile:[%s]", lf.FileName())
 	}
-	if int64(endOffset) == int64(lf.Size()) {
+	if int64(endOffset) == int64(lf.Size()) { //vlog文件完整
 		return nil
 	}
 
@@ -717,15 +724,15 @@ func (vlog *valueLog) replayLog(lf *file.LogFile, offset uint32, replayFn utils.
 	// We mmap 2*opt.ValueLogSize for the last file. See vlog.Open() function
 	// if endOffset <= vlogHeaderSize && lf.fid != vlog.maxFid {
 
-	if endOffset <= utils.VlogHeaderSize {
-		if lf.FID != vlog.maxFid {
+	if endOffset <= utils.VlogHeaderSize { // 文件不完整，且没有实际的value信息
+		if lf.FID != vlog.maxFid { // 不是最新的文件，则需要删除
 			return utils.ErrDeleteVlogFile
 		}
-		return lf.Bootstrap()
+		return lf.Bootstrap() //是最新文件，则需要进行初始化
 	}
 
 	fmt.Printf("Truncating vlog file %s to offset: %d\n", lf.FileName(), endOffset)
-	if err := lf.Truncate(int64(endOffset)); err != nil {
+	if err := lf.Truncate(int64(endOffset)); err != nil { //将vlog文件截断到endOffset
 		return utils.WarpErr(
 			fmt.Sprintf("Truncation needed at offset %d. Can be done manually as well.", endOffset), err)
 	}
@@ -1019,10 +1026,11 @@ type lfDiscardStats struct {
 	updatesSinceFlush int
 }
 
+// 监听并处理脏数据统计信息
 func (vlog *valueLog) flushDiscardStats() {
 	defer vlog.lfDiscardStats.closer.Done()
 
-	mergeStats := func(stats map[uint32]int64) ([]byte, error) {
+	mergeStats := func(stats map[uint32]int64) ([]byte, error) { //合并传入的丢弃统计信息 stats 到 vlog.lfDiscardStats.m 中
 		vlog.lfDiscardStats.Lock()
 		defer vlog.lfDiscardStats.Unlock()
 		for fid, count := range stats {
@@ -1036,12 +1044,12 @@ func (vlog *valueLog) flushDiscardStats() {
 				return nil, err
 			}
 			vlog.lfDiscardStats.updatesSinceFlush = 0
-			return encodedDS, nil
+			return encodedDS, nil // 返回编码后的丢弃统计信息 encodedDS
 		}
 		return nil, nil
 	}
 
-	process := func(stats map[uint32]int64) error {
+	process := func(stats map[uint32]int64) error { //处理丢弃统计信息，并将其写入存储
 		encodedDS, err := mergeStats(stats)
 		if err != nil || encodedDS == nil {
 			return err
@@ -1066,7 +1074,7 @@ func (vlog *valueLog) flushDiscardStats() {
 		case <-closer.CloseSignal:
 			// For simplicity just return without processing already present in stats in flushChan.
 			return
-		case stats := <-vlog.lfDiscardStats.flushChan:
+		case stats := <-vlog.lfDiscardStats.flushChan: //如果收到 vlog.lfDiscardStats.flushChan 中的统计信息，则调用 process 函数进行处理
 			if err := process(stats); err != nil {
 				utils.Err(fmt.Errorf("unable to process discardstats with error: %s", err))
 			}
@@ -1084,14 +1092,15 @@ var requestPool = sync.Pool{
 // request
 type request struct {
 	// Input values
-	Entries []*utils.Entry
+	Entries []*utils.Entry // 用于保存请求的输入值
 	// Output values and wait group stuff below
-	Ptrs []*utils.ValuePtr
-	Wg   sync.WaitGroup
+	Ptrs []*utils.ValuePtr // 用于保存请求的输出值
+	Wg   sync.WaitGroup    // 用于在并发编程中等待一组 goroutine 完成
 	Err  error
 	ref  int32
 }
 
+// 重置request对象的所有字段
 func (req *request) reset() {
 	req.Entries = req.Entries[:0]
 	req.Ptrs = req.Ptrs[:0]
@@ -1159,12 +1168,12 @@ func (vlog *valueLog) pickLog(head *utils.ValuePtr) (files []*file.LogFile) {
 	return files
 }
 
-//sampler 采样器
+// sampler 采样器
 type sampler struct {
 	lf            *file.LogFile
-	sizeRatio     float64
-	countRatio    float64
-	fromBeginning bool
+	sizeRatio     float64 // 采样比例（基于大小），表示需要采样日志文件大小的百分比。
+	countRatio    float64 // 采样比例（基于条目数量），表示需要采样日志条目数量的百分比。
+	fromBeginning bool    // 采样起始位置的标志位。（true 表示从文件开头开始采样; false 表示从文件当前位置开始采样）
 }
 
 func (vlog *valueLog) sample(samp *sampler, discardRatio float64) (*reason, error) {
