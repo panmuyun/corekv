@@ -31,16 +31,16 @@ func NewCloser() *Closer {
 
 // Close 上游通知下游协程进行资源回收，并等待协程通知回收完毕
 func (c *Closer) Close() {
-	close(c.CloseSignal)
-	c.waiting.Wait()
+	close(c.CloseSignal) // 关闭c.CloseSignal：所有正在等待该通道的接收方（通常是协程）会立即收到一个零值
+	c.waiting.Wait()     // 阻塞当前线程，直到计数器归零
 }
 
 // Done 标示协程已经完成资源回收，通知上游正式关闭
 func (c *Closer) Done() {
-	c.waiting.Done()
+	c.waiting.Done() // 减少计数器的值，表示一个协程已经完成
 }
 
 // Add 添加wait 计数
 func (c *Closer) Add(n int) {
-	c.waiting.Add(n)
+	c.waiting.Add(n) // 增加计数器的值，表示有 n 个协程需要等待
 }

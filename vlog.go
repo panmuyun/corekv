@@ -347,8 +347,8 @@ func (vlog *valueLog) doRunGC(lf *file.LogFile, discardRatio float64) (err error
 	}()
 	s := &sampler{
 		lf:            lf,
-		countRatio:    0.01, // 1% of num entries.
-		sizeRatio:     0.1,  // 10% of the file as window.
+		countRatio:    0.01, // 1% of num entries.采样比例
+		sizeRatio:     0.1,  // 10% of the file as window.采样窗口大小
 		fromBeginning: false,
 	}
 
@@ -1171,9 +1171,9 @@ func (vlog *valueLog) pickLog(head *utils.ValuePtr) (files []*file.LogFile) {
 // sampler 采样器
 type sampler struct {
 	lf            *file.LogFile
-	sizeRatio     float64 // 采样比例（基于大小），表示需要采样日志文件大小的百分比。
-	countRatio    float64 // 采样比例（基于条目数量），表示需要采样日志条目数量的百分比。
-	fromBeginning bool    // 采样起始位置的标志位。（true 表示从文件开头开始采样; false 表示从文件当前位置开始采样）
+	sizeRatio     float64 // 采样窗口的大小比例，表示从文件中抽取数据的窗口大小。
+	countRatio    float64 // 采样比例，表示从总数据量中抽取的比例。
+	fromBeginning bool    // 表示是否从文件的开头开始采样。（true 表示从文件开头开始采样; false 表示从文件当前位置开始采样）
 }
 
 func (vlog *valueLog) sample(samp *sampler, discardRatio float64) (*reason, error) {
@@ -1191,8 +1191,10 @@ func (vlog *valueLog) sample(samp *sampler, discardRatio float64) (*reason, erro
 	if !samp.fromBeginning {
 		// Pick a random start point for the log.
 		skipFirstM = float64(rand.Int63n(fileSize)) // Pick a random starting location.
-		skipFirstM -= sizeWindow                    // Avoid hitting EOF by moving back by window.
-		skipFirstM /= float64(utils.Mi)             // Convert to MBs.
+		if skipFirstM > sizeWindow {
+			skipFirstM -= sizeWindow // Avoid hitting EOF by moving back by window.
+		}
+		skipFirstM /= float64(utils.Mi) // Convert to MBs.
 	}
 	var skipped float64
 

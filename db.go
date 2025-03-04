@@ -85,8 +85,8 @@ func Open(opt *Options) *DB {
 	go db.lsm.StartCompacter()
 	// 准备vlog gc
 	c.Add(1)
-	db.writeCh = make(chan *request)
-	db.flushChan = make(chan flushTask, 16)
+	db.writeCh = make(chan *request)        // 无缓冲通道意味着发送和接收操作是同步的，发送方会阻塞直到接收方准备好接收数据。
+	db.flushChan = make(chan flushTask, 16) // 缓冲大小为 16，意味着在没有接收方的情况下，发送方可以连续发送 16 个任务而不会阻塞
 	go db.doWrites(c)
 	// 启动 info 统计过程
 	go db.stats.StartStats()
@@ -178,7 +178,7 @@ func (db *DB) Info() *Stats {
 
 // RunValueLogGC triggers a value log garbage collection.
 func (db *DB) RunValueLogGC(discardRatio float64) error {
-	if discardRatio >= 1.0 || discardRatio <= 0.0 {
+	if discardRatio >= 1.0 || discardRatio <= 0.0 { // 检查 discardRatio 是否在 (0.0, 1.0) 区间，这个参数表示触发 GC 的废弃数据比例阈值
 		return utils.ErrInvalidRequest
 	}
 	// Find head on disk
@@ -211,7 +211,7 @@ func (db *DB) shouldWriteValueToLSM(e *utils.Entry) bool {
 }
 
 func (db *DB) sendToWriteCh(entries []*utils.Entry) (*request, error) {
-	if atomic.LoadInt32(&db.blockWrites) == 1 {
+	if atomic.LoadInt32(&db.blockWrites) == 1 { // db.blockWrites == 1 表示数据库处于写入冻结状态
 		return nil, utils.ErrBlockedWrites
 	}
 	var count, size int64
@@ -245,7 +245,7 @@ func (db *DB) batchSet(entries []*utils.Entry) error {
 
 func (db *DB) doWrites(lc *utils.Closer) {
 	defer lc.Done()
-	pendingCh := make(chan struct{}, 1)
+	pendingCh := make(chan struct{}, 1) // 实现并发控制，确保同时最多只有1个后台写入在进行
 
 	writeRequests := func(reqs []*request) {
 		if err := db.writeRequests(reqs); err != nil {
@@ -260,9 +260,9 @@ func (db *DB) doWrites(lc *utils.Closer) {
 	reqs := make([]*request, 0, 10)
 	for {
 		var r *request
-		select {
-		case r = <-db.writeCh:
-		case <-lc.CloseSignal:
+		select { // 双通道监听
+		case r = <-db.writeCh: // 正常写入通道：从db.writeCh中接收数据，并赋值给r
+		case <-lc.CloseSignal: // 关闭信号通道
 			goto closedCase
 		}
 
@@ -270,7 +270,7 @@ func (db *DB) doWrites(lc *utils.Closer) {
 			reqs = append(reqs, r)
 			reqLen.Set(int64(len(reqs)))
 
-			if len(reqs) >= 3*utils.KVWriteChCapacity {
+			if len(reqs) >= 3*utils.KVWriteChCapacity { // 容量触发：当批量请求达到3*KVWriteChCapacity时强制刷新
 				pendingCh <- struct{}{} // blocking.
 				goto writeCase
 			}
@@ -278,9 +278,9 @@ func (db *DB) doWrites(lc *utils.Closer) {
 			select {
 			// Either push to pending, or continue to pick from writeCh.
 			case r = <-db.writeCh:
-			case pendingCh <- struct{}{}:
+			case pendingCh <- struct{}{}: // 发送struct{}{}到channel pengdingCh。当pendingCh有空位时立即处理（即使未满批）
 				goto writeCase
-			case <-lc.CloseSignal:
+			case <-lc.CloseSignal: // 收到关闭信号时处理剩余所有请求
 				goto closedCase
 			}
 		}
@@ -351,9 +351,9 @@ func (db *DB) writeToLSM(b *request) error {
 
 	for i, entry := range b.Entries {
 		if db.shouldWriteValueToLSM(entry) { // Will include deletion / tombstone case.
-			entry.Meta = entry.Meta &^ utils.BitValuePointer
+			entry.Meta = entry.Meta &^ utils.BitValuePointer // 将 entry.Meta 中与 utils.BitValuePointer 对应的位清除（置为0），而其他位保持不变
 		} else {
-			entry.Meta = entry.Meta | utils.BitValuePointer
+			entry.Meta = entry.Meta | utils.BitValuePointer // 该掩码对应的位会被强制设为1
 			entry.Value = b.Ptrs[i].Encode()
 		}
 		db.lsm.Set(entry)

@@ -64,7 +64,7 @@ func (p ValuePtr) Encode() []byte {
 // Decode decodes the value pointer into the provided byte buffer.
 func (p *ValuePtr) Decode(b []byte) {
 	// Copy over data from b into p. Using *p=unsafe.pointer(...) leads to
-	copy(((*[vptrSize]byte)(unsafe.Pointer(p))[:]), b[:vptrSize])
+	copy(((*[vptrSize]byte)(unsafe.Pointer(p))[:]), b[:vptrSize]) //将字节切片 b 中的数据复制到 ValuePtr 类型的指针 p 所指向的内存区域中
 }
 func IsValuePtr(e *Entry) bool {
 	return e.Meta&BitValuePointer > 0
