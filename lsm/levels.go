@@ -6,8 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/panmuyu/corekv/file"
-	"github.com/panmuyu/corekv/utils"
+	"github.com/panmuyun/corekv/file"
+	"github.com/panmuyun/corekv/utils"
 )
 
 // initLevelManager 初始化函数

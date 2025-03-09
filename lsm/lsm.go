@@ -1,7 +1,7 @@
 package lsm
 
 import (
-	"github.com/panmuyu/corekv/utils"
+	"github.com/panmuyun/corekv/utils"
 )
 
 // LSM _

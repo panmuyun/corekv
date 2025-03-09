@@ -1,4 +1,4 @@
-// Copyright 2021 panmuyu Project Authors
+// Copyright 2021 panmuyun Project Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License")
 // you may not use this file except in compliance with the License.
@@ -32,8 +32,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/panmuyu/corekv/file"
-	"github.com/panmuyu/corekv/utils"
+	"github.com/panmuyun/corekv/file"
+	"github.com/panmuyun/corekv/utils"
 	"github.com/pkg/errors"
 )
 

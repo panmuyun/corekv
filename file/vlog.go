@@ -11,7 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/panmuyu/corekv/utils"
+	"github.com/panmuyun/corekv/utils"
 	"github.com/pkg/errors"
 )
 

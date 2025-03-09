@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/panmuyu/corekv/utils"
+	"github.com/panmuyun/corekv/utils"
 )
 
 type Iterator struct {
