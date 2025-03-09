@@ -8,7 +8,7 @@ import (
 )
 
 func TestCacheBasicCRUD(t *testing.T) {
-	cache := NewCache(5)
+	cache := NewCache(10)
 	for i := 0; i < 10; i++ {
 		key := fmt.Sprintf("key%d", i)
 		val := fmt.Sprintf("val%d", i)
@@ -17,8 +17,8 @@ func TestCacheBasicCRUD(t *testing.T) {
 	}
 
 	for i := 0; i < 1000; i++ {
-		key := fmt.Sprintf("key%d", i)
-		val := fmt.Sprintf("val%d", i)
+		key := fmt.Sprintf("key%d", i%50)
+		val := fmt.Sprintf("val%d", i%50)
 		res, ok := cache.Get(key)
 		if ok {
 			fmt.Printf("get %s: %s\n", key, cache)
@@ -28,6 +28,8 @@ func TestCacheBasicCRUD(t *testing.T) {
 		assert.Equal(t, res, nil)
 	}
 	fmt.Printf("at last: %s\n", cache)
+	fmt.Printf("hit:%d, miss:%d\n", cache.hits, cache.misses)
+	fmt.Printf("cache hit rate: %f %%\n", cache.HitRate())
 }
 
 func TestCacheSetRepeatedKey(t *testing.T) {

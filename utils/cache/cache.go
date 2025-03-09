@@ -3,6 +3,7 @@ package cache
 import (
 	"container/list"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	xxhash "github.com/cespare/xxhash/v2"
@@ -17,6 +18,8 @@ type Cache struct {
 	sample          int32                    // 当前采样数量
 	sampleThreshold int32                    // 采样阈值，到达阈值计数会减半
 	data            map[uint64]*list.Element // 与windowbuf.data、mainbuf.data共用，是同一块内存空间
+	hits            int32
+	misses          int32
 }
 
 type Options struct {
@@ -70,7 +73,7 @@ func (cache *Cache) set(key, value interface{}) bool {
 	// keyHash 用来快速定位，conflice 用来判断冲突
 	keyHash, conflictHash := cache.keyToHash(key)
 
-	cache.inc(keyHash)
+	cache.inc(keyHash) //增加访问计数
 
 	// 处理key已经存在于cache中的情况
 	val, ok := cache.data[keyHash]
@@ -83,10 +86,12 @@ func (cache *Cache) set(key, value interface{}) bool {
 			} else {
 				cache.mainbuf.get(val)
 			}
+			atomic.AddInt32(&cache.hits, 1)
 			return true
 		}
 	}
 	// 此时，key不在cache中，需要插入
+	atomic.AddInt32(&cache.misses, 1)
 	// 刚放进去的缓存都先放到 window lru 中，所以 stage = 0
 	i := storeItem{
 		stage:    0,
@@ -146,15 +151,17 @@ func (cache *Cache) get(key interface{}) (interface{}, bool) {
 
 	val, ok := cache.data[keyHash] // ok表示data中是否存在keyHash
 	if !ok {                       // 未找到对应项
+		atomic.AddInt32(&cache.misses, 1)
 		return nil, false
 	}
 
 	item := val.Value.(*storeItem)
 
 	if item.conflict != conflictHash { // 冲突检测不通过，因为不同的key计算得到的哈希值keyHash可能相同？
+		atomic.AddInt32(&cache.misses, 1)
 		return nil, false
 	}
-
+	atomic.AddInt32(&cache.hits, 1)
 	v := item.value
 
 	if item.stage == 0 {
@@ -257,4 +264,14 @@ func (cache *Cache) String() string {
 	var s string
 	s += cache.windowbuf.String() + " | " + cache.mainbuf.String()
 	return s
+}
+
+func (cache *Cache) HitRate() float64 {
+	cache.mutex.Lock()
+	defer cache.mutex.Unlock()
+	total := cache.hits + cache.misses
+	if total == 0 {
+		return 0.0
+	}
+	return float64(cache.hits) / float64(total) * 100
 }

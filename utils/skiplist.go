@@ -93,7 +93,7 @@ type Skiplist struct {
 	OnClose    func()
 }
 
-// 新建一个跳表，默认height为1,ref为1
+// 新建一个跳表，默认height为1,ref为1；arenasize为 1<<20（1MB）
 func NewSkiplist(arenasize int64) *Skiplist {
 	arena := newArena(arenasize)
 	headnode := newNode(arena, nil, ValueStruct{}, maxHeight)

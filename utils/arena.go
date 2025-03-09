@@ -83,6 +83,7 @@ func (arena *Arena) putVal(vs ValueStruct) uint32 {
 	return start_offset
 }
 
+// 将arena.buf[offset]的地址转为*node类型，并返回
 func (arena *Arena) getNode(offset uint32) *node {
 	if offset == 0 {
 		return nil

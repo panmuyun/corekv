@@ -384,7 +384,7 @@ func (vlog *valueLog) rewrite(f *file.LogFile) error {
 		if err != nil {
 			return err
 		}
-		if utils.DiscardEntry(e, vs) { // 判断 entry 是否过期/可删除
+		if utils.DiscardEntry(e, vs) { // 判断 entry 是否过期/已删除
 			return nil
 		}
 
@@ -469,7 +469,7 @@ func (vlog *valueLog) rewrite(f *file.LogFile) error {
 		}
 		if vlog.iteratorCount() == 0 {
 			delete(vlog.filesMap, f.FID)
-			//deleteFileNow = true
+			deleteFileNow = true
 		} else {
 			vlog.filesToBeDeleted = append(vlog.filesToBeDeleted, f.FID)
 		}
