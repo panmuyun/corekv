@@ -1,4 +1,4 @@
-// Copyright 2021 hardcore-os Project Authors
+// Copyright 2021 panmuyu Project Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License")
 // you may not use this file except in compliance with the License.
@@ -39,11 +39,11 @@ const (
 	// This is O_DSYNC (datasync) on platforms that support it -- see file_unix.go
 	datasyncFileFlag = 0x0
 	// 基于可变长编码,其最可能的编码
-	MaxHeaderSize          = 21
-	VlogHeaderSize         = 0
-	MaxVlogFileSize uint32 = math.MaxUint32
-	Mi              int64  = 1 << 20
-	KVWriteChCapacity = 1000
+	MaxHeaderSize            = 21
+	VlogHeaderSize           = 0
+	MaxVlogFileSize   uint32 = math.MaxUint32
+	Mi                int64  = 1 << 20
+	KVWriteChCapacity        = 1000
 )
 
 // meta

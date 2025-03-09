@@ -14,7 +14,7 @@
 
 package corekv
 
-import "github.com/hardcore-os/corekv/utils"
+import "github.com/panmuyu/corekv/utils"
 
 type Stats struct {
 	closer   *utils.Closer
