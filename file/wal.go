@@ -48,6 +48,10 @@ func (wf *WalFile) Close() error {
 	if err := wf.f.Close(); err != nil {
 		return err
 	}
+	// 尝试修复：panic: close work_test/00001.wal: file already closed
+	wf.lock.Lock()
+	wf.f.Fd = nil
+	wf.lock.Unlock()
 	return os.Remove(fileName)
 }
 

@@ -16,6 +16,8 @@ package corekv
 
 import (
 	"fmt"
+	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,4 +81,83 @@ func TestAPI(t *testing.T) {
 		}
 	}
 
+}
+
+const (
+	numOperations = 10000 // 总操作数
+	numGoroutines = 2     // 并发 Goroutine 数
+	keyLength     = 16    // 键的长度
+	valueLength   = 64    // 值的长度
+)
+
+var (
+	keys   = make([]string, numOperations)
+	values = make([]string, numOperations)
+)
+
+func init() {
+	// 初始化随机键值对
+	rand.Seed(time.Now().UnixNano())
+	for i := 0; i < numOperations; i++ {
+		keys[i] = randString(keyLength)
+		values[i] = randString(valueLength)
+	}
+}
+func randString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
+}
+
+func TestCoreKV(t *testing.T) {
+	clearDir()
+	db := Open(opt)
+	defer db.Close()
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	start := time.Now()
+
+	// 并发执行 Set 操作
+	for i := 0; i < numGoroutines; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := workerID; j < numOperations; j += numGoroutines {
+				e := utils.NewEntry([]byte(keys[j]), []byte(values[j]))
+				if err := db.Set(e); err != nil {
+					t.Errorf("Set failed: %v", err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	setElapsed := time.Since(start)
+	fmt.Printf("corekv Set: %d operations completed in %v\n", numOperations, setElapsed)
+	fmt.Printf("corekv Set throughput: %.2f ops/sec\n", float64(numOperations)/setElapsed.Seconds())
+
+	// 并发执行 Get 操作
+	wg.Add(numGoroutines)
+	start = time.Now()
+
+	for i := 0; i < numGoroutines; i++ {
+		go func(workerID int) {
+			defer wg.Done()
+			for j := workerID; j < numOperations; j += numGoroutines {
+				if _, err := db.Get([]byte(keys[j])); err != nil {
+					t.Errorf("Get failed: %v", err)
+					return
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	getElapsed := time.Since(start)
+	fmt.Printf("corekv Get: %d operations completed in %v\n", numOperations, getElapsed)
+	fmt.Printf("corekv Get throughput: %.2f ops/sec\n", float64(numOperations)/getElapsed.Seconds())
 }
