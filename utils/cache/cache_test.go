@@ -17,8 +17,8 @@ func TestCacheBasicCRUD(t *testing.T) {
 	}
 
 	for i := 0; i < 1000; i++ {
-		key := fmt.Sprintf("key%d", i%50)
-		val := fmt.Sprintf("val%d", i%50)
+		key := fmt.Sprintf("key%d", i)
+		val := fmt.Sprintf("val%d", i)
 		res, ok := cache.Get(key)
 		if ok {
 			fmt.Printf("get %s: %s\n", key, cache)
