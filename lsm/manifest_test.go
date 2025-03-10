@@ -1,4 +1,4 @@
-// Copyright 2021 hardcore-os Project Authors
+// Copyright 2021 panmuyun Project Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License")
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hardcore-os/corekv/utils"
+	"github.com/panmuyun/corekv/utils"
 	"github.com/stretchr/testify/require"
 )
 

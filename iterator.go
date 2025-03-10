@@ -15,8 +15,8 @@
 package corekv
 
 import (
-	"github.com/hardcore-os/corekv/lsm"
-	"github.com/hardcore-os/corekv/utils"
+	"github.com/panmuyun/corekv/lsm"
+	"github.com/panmuyun/corekv/utils"
 )
 
 type DBIterator struct {

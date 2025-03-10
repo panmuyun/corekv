@@ -14,7 +14,7 @@
 
 package corekv
 
-import "github.com/hardcore-os/corekv/utils"
+import "github.com/panmuyun/corekv/utils"
 
 // Options corekv 总的配置文件
 type Options struct {

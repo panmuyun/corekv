@@ -1,4 +1,4 @@
-module github.com/hardcore-os/corekv
+module github.com/panmuyun/corekv
 
 go 1.16
 

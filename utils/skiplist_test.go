@@ -1,4 +1,4 @@
-// Copyright 2021 hardcore-os Project Authors
+// Copyright 2021 panmuyun Project Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License")
 // you may not use this file except in compliance with the License.
@@ -74,8 +74,8 @@ func Benchmark_SkipListBasicCRUD(b *testing.B) {
 func TestDrawList(t *testing.T) {
 	list := NewSkiplist(1000)
 	n := 12
-	for i:=0; i<n; i++ {
-		index := strconv.Itoa(r.Intn(90)+10)
+	for i := 0; i < n; i++ {
+		index := strconv.Itoa(r.Intn(90) + 10)
 		key := index + RandString(8)
 		entryRand := NewEntry([]byte(key), []byte(index))
 		list.Add(entryRand)
