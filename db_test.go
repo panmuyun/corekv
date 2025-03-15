@@ -112,7 +112,52 @@ func randString(length int) string {
 	return string(b)
 }
 
-func TestCoreKV(t *testing.T) {
+// 单协程测试
+func TestCoreKVSinglePressure(t *testing.T) {
+	clearDir()
+	db := Open(opt)
+	defer func() { _ = db.Close() }()
+
+	// 测试参数
+	numOperations := 1000 // 设置操作次数
+	var totalSetLatency time.Duration
+	var totalGetLatency time.Duration
+
+	// 压力测试
+	for i := 0; i < numOperations; i++ {
+		key, val := fmt.Sprintf("key%d", i), fmt.Sprintf("val%d", i)
+
+		// 测试 Set 操作
+		startSet := time.Now()
+		e := utils.NewEntry([]byte(key), []byte(val)).WithTTL(1000 * time.Second)
+		if err := db.Set(e); err != nil {
+			t.Fatal(err)
+		}
+		elapsedSet := time.Since(startSet)
+		totalSetLatency += elapsedSet
+
+		// 测试 Get 操作
+		startGet := time.Now()
+		if entry, err := db.Get([]byte(key)); err != nil {
+			t.Fatal(err)
+		} else {
+			t.Logf("db.Get key=%s, value=%s, expiresAt=%d", entry.Key, entry.Value, entry.ExpiresAt)
+		}
+		elapsedGet := time.Since(startGet)
+		totalGetLatency += elapsedGet
+	}
+
+	// 计算平均延迟
+	avgSetLatency := totalSetLatency / time.Duration(numOperations)
+	avgGetLatency := totalGetLatency / time.Duration(numOperations)
+
+	// 输出结果
+	fmt.Printf("Pressure Test Results:\n")
+	fmt.Printf("Total Set operations: %d, Total Set latency: %v, Avg Set latency: %v\n", numOperations, totalSetLatency, avgSetLatency)
+	fmt.Printf("Total Get operations: %d, Total Get latency: %v, Avg Get latency: %v\n", numOperations, totalGetLatency, avgGetLatency)
+}
+
+func TestCoreKVMulti(t *testing.T) {
 	clearDir()
 	db := Open(opt)
 	defer db.Close()

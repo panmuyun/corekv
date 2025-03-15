@@ -29,12 +29,13 @@ import (
 
 // WalFile _
 type WalFile struct {
-	lock    *sync.RWMutex //读写锁的指针，用于在多线程环境中对 WalFile 进行并发控制
-	f       *MmapFile     //表示通过内存映射（Memory Mapping）方式访问的文件
-	opts    *Options
-	buf     *bytes.Buffer //用于在内存中进行字节数据的读写操作
-	size    uint32        //表示 WalFile 的总大小
-	writeAt uint32        //表示当前写操作的位置，即下次写操作将在文件的哪个位置开始
+	lock      *sync.RWMutex //读写锁的指针，用于在多线程环境中对 WalFile 进行并发控制
+	f         *MmapFile     //表示通过内存映射（Memory Mapping）方式访问的文件
+	opts      *Options
+	buf       *bytes.Buffer //用于在内存中进行字节数据的读写操作
+	size      uint32        //表示 WalFile 的总大小
+	writeAt   uint32        //表示当前写操作的位置，即下次写操作将在文件的哪个位置开始
+	closeonce sync.Once
 }
 
 // Fid _
@@ -45,13 +46,18 @@ func (wf *WalFile) Fid() uint64 {
 // Close _
 func (wf *WalFile) Close() error {
 	fileName := wf.f.Fd.Name()
+
 	if err := wf.f.Close(); err != nil {
 		return err
 	}
 	// 尝试修复：panic: close work_test/00001.wal: file already closed
-	wf.lock.Lock()
-	wf.f.Fd = nil
-	wf.lock.Unlock()
+	// var err error
+	// wf.closeonce.Do(func() {
+	// 	err = wf.f.Close()
+	// })
+	// if err != nil {
+	// 	return err
+	// }
 	return os.Remove(fileName)
 }
 
